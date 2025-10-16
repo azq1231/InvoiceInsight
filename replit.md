@@ -83,31 +83,36 @@
 - [x] Python 環境與依賴安裝
 - [x] 配置系統 (YAML + Config 管理)
 - [x] 日誌系統 (Rotating File Handler)
-- [x] OAuth 2.0 認證模組
+- [x] OAuth 2.0 認證模組 (Keyring + 檔案備援)
 - [x] 主視窗 GUI (分割視圖)
-- [x] 圖片檢視器 (基礎縮放、旋轉)
+- [x] 圖片檢視器 (縮放、平移、旋轉)
 - [x] 資料編輯面板
+- [x] ROI 選取工具
+- [x] Google Photos API 整合 (懶載入、分頁)
+- [x] Google Sheets API 整合
+- [x] Google Cloud Vision OCR
+- [x] Tesseract OCR (影像前處理、扭曲校正)
+- [x] W-DST 融合算法
+- [x] 資料萃取器 (日期、項目、金額)
+- [x] 資料驗證器 (異常檢測)
+- [x] 快取管理 (Disk Cache with TTL)
+- [x] OCR 協調器 (完整處理流程)
+- [x] 已處理照片追蹤系統
+- [x] VNC 工作流程配置
 
 ### 開發中 🚧
-- [ ] Google Photos API 整合
-- [ ] 照片選擇器 (相簿列表、懶載入、分頁)
-- [ ] Google Cloud Vision OCR
-- [ ] Tesseract OCR
-- [ ] W-DST 融合算法
-- [ ] 資料後處理與驗證
-- [ ] 批次處理系統
-- [ ] Google Sheets 匯出
-- [ ] 快取管理 (LRU + Disk)
-- [ ] API 配額監控
+- [ ] GUI 整合 (連接後端 OCR 與前端介面)
+- [ ] 批次處理系統 (工作池、重試邏輯)
+- [ ] API 配額監控與速率限制
+- [ ] 照片選擇器 UI 完善
 
 ### 待規劃 📋
-- [ ] ROI 選取工具實作
-- [ ] 放大鏡工具
-- [ ] 自訂字典學習
+- [ ] 放大鏡工具實作
+- [ ] 自訂字典學習功能
 - [ ] NLP 語意驗證
-- [ ] 審計日誌系統
-- [ ] 多格式匯出 (CSV/JSON/XML)
-- [ ] 排程自動同步
+- [ ] 完整審計日誌系統
+- [ ] 多格式匯出 (CSV/JSON/XML) 實作
+- [ ] 排程自動同步功能
 
 ## 使用者偏好設定
 
