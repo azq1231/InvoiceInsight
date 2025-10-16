@@ -1,0 +1,106 @@
+app:
+  name: "OCR Expense Tracker"
+  version: "1.0.0"
+
+oauth:
+  scopes:
+    - "https://www.googleapis.com/auth/photoslibrary.readonly"
+    - "https://www.googleapis.com/auth/spreadsheets"
+  client_secrets_file: "config/client_secrets.json"
+  token_service_name: "ocr_expense_tracker"
+
+cache:
+  memory_max_size: 100
+  disk_cache_dir: "data/cache"
+  thumbnail_ttl: 3600
+  image_ttl: 1800
+
+ocr:
+  google_vision:
+    enabled: true
+    confidence_threshold: 0.7
+    feature_type: "DOCUMENT_TEXT_DETECTION"
+  
+  tesseract:
+    enabled: true
+    confidence_threshold: 0.6
+    language: "chi_tra+eng"
+    config: "--psm 6"
+  
+  fusion:
+    algorithm: "weighted_dempster_shafer"
+    google_vision_weight: 0.7
+    tesseract_weight: 0.3
+    min_confidence_threshold: 0.5
+
+processing:
+  batch:
+    max_workers: 3
+    queue_type: "sqlite"
+    queue_path: "data/work_queue.db"
+  
+  retry:
+    max_attempts: 3
+    exponential_backoff: true
+    backoff_base: 2
+    jitter: true
+
+api_quota:
+  google_vision:
+    requests_per_minute: 1800
+    soft_limit_percent: 80
+    fallback_to_tesseract: true
+  
+  rate_limiting:
+    algorithm: "token_bucket"
+    bucket_size: 100
+    refill_rate: 10
+
+validation:
+  regex:
+    date: "\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{4}"
+    amount: "\\d+([,.]\\d{1,2})?"
+    currency: "[NT$€¥£฿]"
+  
+  anomaly_detection:
+    check_total_mismatch: true
+    mismatch_tolerance: 0.01
+    check_tax_rate: true
+    expected_tax_rate: 0.05
+
+export:
+  formats:
+    - "csv"
+    - "json"
+    - "xml"
+  default_format: "csv"
+
+logging:
+  level: "INFO"
+  log_dir: "data/logs"
+  max_file_size: 10485760
+  backup_count: 5
+
+ui:
+  window:
+    width: 1400
+    height: 900
+    min_width: 1200
+    min_height: 700
+  
+  splitter:
+    left_panel_ratio: 0.6
+    right_panel_ratio: 0.4
+  
+  keyboard_shortcuts:
+    next_photo: "Right"
+    previous_photo: "Left"
+    zoom_in: "Ctrl+Plus"
+    zoom_out: "Ctrl+Minus"
+    rotate_cw: "Ctrl+R"
+    rotate_ccw: "Ctrl+Shift+R"
+    select_roi: "Ctrl+S"
+    start_ocr: "Ctrl+O"
+    approve: "Ctrl+A"
+    reject: "Ctrl+X"
+    jump_to_anomaly: "Ctrl+J"

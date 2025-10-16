@@ -1,0 +1,30 @@
+modules = ["python-3.11"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+packages = ["freetype", "glibcLocales", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "pkg-config", "tcl", "tesseract", "tk", "xsimd", "zlib", "libGL", "mesa", "xorg.libX11", "xorg.libXext"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "OCR Desktop App"
+
+[[workflows.workflow]]
+name = "OCR Desktop App"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "vnc"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "QT_QPA_PLATFORM=offscreen python main.py"
