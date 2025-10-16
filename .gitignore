@@ -48,6 +48,7 @@ data/processed_photos/
 # OAuth Secrets
 config/client_secrets.json
 config/credentials.json
+data/.token.json
 *.json.bak
 
 # OS
