@@ -27,18 +27,19 @@ class DataExtractor:
             
             date = self._extract_date(lines[0] if lines else '')
             
-            items = self._extract_items(lines[1:] if len(lines) > 1 else [])
+            items, declared_total = self._extract_items_and_total(lines[1:] if len(lines) > 1 else [])
             
-            total = sum(item['amount'] for item in items)
+            calculated_total = sum(item['amount'] for item in items if item['category'] != '總計')
             
             result = {
                 'date': date,
                 'items': items,
-                'total': total,
+                'calculated_total': calculated_total,
+                'declared_total': declared_total if declared_total is not None else calculated_total,
                 'raw_text': ocr_text
             }
             
-            logger.info(f"Extracted {len(items)} items with total: {total}")
+            logger.info(f"Extracted {len(items)} items, calculated: {calculated_total}, declared: {result['declared_total']}")
             return result
             
         except Exception as e:
@@ -53,20 +54,28 @@ class DataExtractor:
         
         return datetime.now().strftime('%Y-%m-%d')
     
-    def _extract_items(self, lines: List[str]) -> List[Dict]:
-        """Extract items (name + amount) from text lines"""
+    def _extract_items_and_total(self, lines: List[str]) -> Tuple[List[Dict], Optional[float]]:
+        """Extract items and declared total from text lines"""
         items = []
+        declared_total = None
+        
+        total_keywords = ['總計', '合計', '總額', 'total', '小計']
         
         for line in lines:
             line = line.strip()
             if not line:
                 continue
             
+            is_total_line = any(keyword in line.lower() for keyword in total_keywords)
+            
             item = self._parse_item_line(line)
             if item:
+                if is_total_line:
+                    declared_total = item['amount']
+                    item['category'] = '總計'
                 items.append(item)
         
-        return items
+        return items, declared_total
     
     def _parse_item_line(self, line: str) -> Optional[Dict]:
         """Parse a single line to extract item name and amount"""
