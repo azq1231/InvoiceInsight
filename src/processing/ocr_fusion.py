@@ -1,4 +1,4 @@
-"""Weighted Dempster-Shafer fusion algorithm for combining OCR results"""
+"""Weighted probabilistic fusion algorithm for combining OCR results"""
 
 import logging
 from typing import Dict, List, Tuple
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class OCRFusion:
-    """Weighted Dempster-Shafer (W-DST) fusion for combining OCR engine results"""
+    """Weighted probabilistic fusion for combining OCR engine results"""
     
     def __init__(self):
         self.config = get_config()
@@ -20,7 +20,7 @@ class OCRFusion:
         logger.info(f"OCR Fusion initialized: Vision={self.vision_weight}, Tesseract={self.tesseract_weight}")
     
     def fuse_results(self, vision_result: Dict, tesseract_result: Dict) -> Dict:
-        """Fuse results from Google Vision and Tesseract using true W-DST"""
+        """Fuse results from Google Vision and Tesseract using weighted probabilistic fusion"""
         try:
             fused = {
                 'full_text': '',
@@ -41,7 +41,7 @@ class OCRFusion:
             fused['confidence'] = self._calculate_overall_confidence(fused_blocks)
             fused['primary_engine'] = 'weighted_dempster_shafer'
             
-            logger.info(f"W-DST fusion completed: confidence={fused['confidence']:.2f}")
+            logger.info(f"Weighted fusion completed: confidence={fused['confidence']:.2f}")
             return fused
             
         except Exception as e:
@@ -51,7 +51,7 @@ class OCRFusion:
             return vision_result if vision_conf > tesseract_conf else tesseract_result
     
     def _fuse_blocks_dempster_shafer(self, vision_blocks: List[Dict], tesseract_blocks: List[Dict]) -> List[Dict]:
-        """Fuse text blocks using true Weighted Dempster-Shafer theory"""
+        """Fuse text blocks using weighted probabilistic fusion"""
         fused_blocks = []
         used_tesseract = set()
         
@@ -98,41 +98,36 @@ class OCRFusion:
         return fused_blocks
     
     def _dempster_shafer_combine(self, vision_block: Dict, tesseract_block: Dict, similarity: float) -> Dict:
-        """Combine two blocks using simplified Dempster-Shafer with ignorance mass"""
-        m1_h = vision_block['confidence'] * self.vision_weight
-        m1_omega = 1 - m1_h
+        """Combine two blocks using weighted probabilistic fusion with conflict handling"""
+        c1 = vision_block['confidence']
+        c2 = tesseract_block['confidence']
+        w1 = self.vision_weight
+        w2 = self.tesseract_weight
         
-        m2_h = tesseract_block['confidence'] * self.tesseract_weight * similarity
-        m2_omega = 1 - m2_h
+        if similarity >= 0.8:
+            combined_conf = min(1.0, (c1 * w1 + c2 * w2) * (1 + similarity * 0.2))
+        elif similarity >= 0.5:
+            combined_conf = (c1 * w1 + c2 * w2) / (w1 + w2)
+        else:
+            conflict_penalty = (1 - similarity) * min(c1 * w1, c2 * w2)
+            combined_conf = max(c1 * w1, c2 * w2) * (1 - conflict_penalty * 0.5)
         
-        m_hh = m1_h * m2_h
-        m_h_omega = m1_h * m2_omega
-        m_omega_h = m1_omega * m2_h
-        m_omega_omega = m1_omega * m2_omega
+        combined_conf = min(max(combined_conf, 0.0), 1.0)
         
-        k = 0.0
-        
-        m_combined_h = m_hh + m_h_omega + m_omega_h
-        m_combined_omega = m_omega_omega
-        
-        m_combined_h = min(max(m_combined_h, 0.0), 1.0)
-        
-        if vision_block['confidence'] > tesseract_block['confidence']:
+        if c1 * w1 > c2 * w2:
             selected_text = vision_block['text']
         else:
             selected_text = tesseract_block['text']
         
         return {
             'text': selected_text,
-            'confidence': m_combined_h,
-            'source': 'dempster_shafer_combined',
-            'vision_confidence': vision_block['confidence'],
-            'tesseract_confidence': tesseract_block['confidence'],
+            'confidence': combined_conf,
+            'source': 'weighted_fusion_combined',
+            'vision_confidence': c1,
+            'tesseract_confidence': c2,
             'similarity': similarity,
-            'conflict_k': k,
-            'mass_vision': m1_h,
-            'mass_tesseract': m2_h,
-            'ignorance_mass': m_combined_omega,
+            'weighted_vision': c1 * w1,
+            'weighted_tesseract': c2 * w2,
             'bounding_box': vision_block.get('bounding_box')
         }
     

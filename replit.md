@@ -79,26 +79,26 @@
 ## 開發狀態
 
 ### 已完成 ✅
-- [x] 專案結構建立
-- [x] Python 環境與依賴安裝
+- [x] 專案結構建立 (模組化架構)
+- [x] Python 環境與依賴安裝 (100+ 套件)
 - [x] 配置系統 (YAML + Config 管理)
 - [x] 日誌系統 (Rotating File Handler)
 - [x] OAuth 2.0 認證模組 (Keyring + 檔案備援)
 - [x] 主視窗 GUI (分割視圖)
 - [x] 圖片檢視器 (縮放、平移、旋轉)
-- [x] 資料編輯面板
-- [x] ROI 選取工具
+- [x] 資料編輯面板 (表格顯示)
+- [x] ROI 選取工具 (矩形選擇)
 - [x] Google Photos API 整合 (懶載入、分頁)
-- [x] Google Sheets API 整合
-- [x] Google Cloud Vision OCR
+- [x] Google Sheets API 整合 (資料匯出)
+- [x] Google Cloud Vision OCR (DOCUMENT_TEXT_DETECTION)
 - [x] Tesseract OCR (影像前處理、扭曲校正)
-- [x] W-DST 融合算法
-- [x] 資料萃取器 (日期、項目、金額)
-- [x] 資料驗證器 (異常檢測)
+- [x] 加權機率融合算法 (相似度驅動信心度調整)
+- [x] 資料萃取器 (日期、項目、金額、總額分離)
+- [x] 資料驗證器 (總額不符、稅率異常檢測)
 - [x] 快取管理 (Disk Cache with TTL)
-- [x] OCR 協調器 (完整處理流程)
-- [x] 已處理照片追蹤系統
-- [x] VNC 工作流程配置
+- [x] OCR 協調器 (完整處理管線)
+- [x] 已處理照片追蹤系統 (防重複處理)
+- [x] VNC 工作流程配置 (遠端桌面顯示)
 
 ### 開發中 🚧
 - [ ] GUI 整合 (連接後端 OCR 與前端介面)

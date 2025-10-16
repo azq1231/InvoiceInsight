@@ -49,12 +49,12 @@
   - 扭曲校正 (Skew Detection & Rotation)
   - 繁體中文 + 英文支援
 
-#### 6. Weighted Dempster-Shafer 融合算法 (100%)
-- ✅ 真實 W-DST 實作 (Mass Functions)
-- ✅ 信心度加權組合
-- ✅ 衝突檢測 (Conflict K)
-- ✅ 文字相似度比對
-- ✅ 區塊對齊與融合
+#### 6. 加權機率融合算法 (100%)
+- ✅ 雙引擎信心度加權組合
+- ✅ 相似度驅動融合策略
+- ✅ 衝突檢測與懲罰機制
+- ✅ 文字相似度比對 (SequenceMatcher)
+- ✅ 區塊對齊與智能選擇
 
 #### 7. 資料萃取與驗證 (100%)
 - ✅ 日期辨識 (第一行自動擷取)
@@ -109,17 +109,17 @@
 
 ## 技術亮點
 
-### 1. 真實 Weighted Dempster-Shafer 融合
+### 1. 智能加權機率融合
 ```python
-# 計算 Mass Functions
-m1_h = vision_confidence * vision_weight
-m2_h = tesseract_confidence * tesseract_weight * similarity
+# 高相似度 (≥0.8): 增強信心度
+combined_conf = (c1*w1 + c2*w2) * (1 + similarity*0.2)
 
-# 計算衝突 (Conflict K)
-k = m1_h * (1 - m2_h - m2_uncertainty) + m2_h * (1 - m1_h - m1_uncertainty)
+# 中相似度 (0.5-0.8): 加權平均
+combined_conf = (c1*w1 + c2*w2) / (w1 + w2)
 
-# Dempster 組合規則
-m_combined = (m1_h * m2_h) / (1 - k)
+# 低相似度 (<0.5): 衝突懲罰
+conflict_penalty = (1-similarity) * min(c1*w1, c2*w2)
+combined_conf = max(c1*w1, c2*w2) * (1 - conflict_penalty*0.5)
 ```
 
 ### 2. 智能總額驗證
