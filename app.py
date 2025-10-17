@@ -381,21 +381,25 @@ def render_ocr_results():
             if abs(declared_total - calculated_total) > 1.0:
                 st.error(f"⚠️ 总额不符！差异: {abs(declared_total - calculated_total):.2f}")
             
-            if st.button("💾 核准并保存到 Google Sheets", type="primary", use_container_width=True):
-                save_data = {
-                    'date': date,
-                    'items': edited_df.to_dict('records'),
-                    'declared_total': declared_total,
-                    'calculated_total': calculated_total,
-                    'confidence': confidence
-                }
-                
-                if save_to_sheets(save_data):
-                    st.success("✅ 资料已成功保存到 Google Sheets！")
-                    st.balloons()
-                    st.session_state.ocr_result = None
-                    st.session_state.selected_photo = None
-                    st.rerun()
+            # 只在已登入时显示保存按钮
+            if st.session_state.authenticated and st.session_state.sheets_api:
+                if st.button("💾 核准并保存到 Google Sheets", type="primary", use_container_width=True):
+                    save_data = {
+                        'date': date,
+                        'items': edited_df.to_dict('records'),
+                        'declared_total': declared_total,
+                        'calculated_total': calculated_total,
+                        'confidence': confidence
+                    }
+                    
+                    if save_to_sheets(save_data):
+                        st.success("✅ 资料已成功保存到 Google Sheets！")
+                        st.balloons()
+                        st.session_state.ocr_result = None
+                        st.session_state.selected_photo = None
+                        st.rerun()
+            else:
+                st.info("💡 提示：登入 Google 帐号后即可保存到 Google Sheets")
         else:
             st.info("未辨识到项目资料")
 
@@ -456,7 +460,7 @@ def render_upload_tab():
                             st.session_state.selected_photo = {
                                 'id': 'uploaded',
                                 'filename': uploaded_file.name,
-                                'baseUrl': None
+                                'base_url': None  # 使用一致的 key 名称
                             }
                             st.success("✅ 辨识完成！")
                             st.rerun()
