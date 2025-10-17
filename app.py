@@ -58,15 +58,19 @@ def init_session_state():
 
 def authenticate():
     """处理 Google 认证"""
-    if st.session_state.auth_manager.authenticate():
-        creds = st.session_state.auth_manager.get_credentials()
-        st.session_state.photos_api = GooglePhotosAPI(creds)
-        st.session_state.sheets_api = GoogleSheetsAPI(creds)
-        st.session_state.orchestrator = OCROrchestrator(creds)
-        st.session_state.authenticated = True
-        logger.info("用户已成功认证")
-        return True
-    return False
+    try:
+        if st.session_state.auth_manager.authenticate():
+            creds = st.session_state.auth_manager.get_credentials()
+            st.session_state.photos_api = GooglePhotosAPI(creds)
+            st.session_state.sheets_api = GoogleSheetsAPI(creds)
+            st.session_state.orchestrator = OCROrchestrator(creds)
+            st.session_state.authenticated = True
+            logger.info("用户已成功认证")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"认证失败: {e}")
+        return False
 
 def logout():
     """登出并清除认证"""
@@ -80,6 +84,8 @@ def logout():
     st.session_state.photo_list = []
     st.session_state.photos_loaded_count = 0
     st.session_state.loaded_photo_ids = set()
+    st.session_state.oauth_url = None
+    st.session_state.oauth_state = None
     logger.info("用户已登出")
 
 def load_photos(page_size=20):
@@ -186,12 +192,54 @@ def render_sidebar():
         
         if not st.session_state.authenticated:
             st.info("请先登入 Google 帐号")
-            if st.button("🔑 登入 Google", use_container_width=True):
-                if authenticate():
-                    st.success("登入成功！")
-                    st.rerun()
+            
+            # Initialize auth URL only once
+            if 'oauth_url' not in st.session_state or st.session_state.oauth_url is None:
+                result = st.session_state.auth_manager.get_auth_url()
+                if result:
+                    auth_url, state = result
+                    st.session_state.oauth_url = auth_url
+                    st.session_state.oauth_state = state
                 else:
-                    st.error("登入失败，请重试")
+                    st.session_state.oauth_url = False  # Mark as failed
+            
+            if st.session_state.get('oauth_url'):
+                st.warning("⚠️ 请按照以下步骤完成授权")
+                st.markdown("**步骤 1:** 点击下方链接打开 Google 授权")
+                st.markdown(f"[🔗 打开 Google 授权页面]({st.session_state.oauth_url})")
+                st.markdown("**步骤 2:** 授权后，您会被导向 OAuth Playground")
+                st.markdown("**步骤 3:** 复制页面上显示的**授权码**（code）")
+                st.markdown("**步骤 4:** 将授权码粘贴到下方输入框")
+                
+                auth_code = st.text_input("📋 授权码", type="password", help="从 OAuth Playground 复制的 code")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ 确认登入", use_container_width=True):
+                        if auth_code:
+                            if st.session_state.auth_manager.authenticate_with_code(auth_code):
+                                creds = st.session_state.auth_manager.get_credentials()
+                                st.session_state.photos_api = GooglePhotosAPI(creds)
+                                st.session_state.sheets_api = GoogleSheetsAPI(creds)
+                                st.session_state.orchestrator = OCROrchestrator(creds)
+                                st.session_state.authenticated = True
+                                # Clear OAuth state
+                                st.session_state.oauth_url = None
+                                st.session_state.oauth_state = None
+                                st.success("登入成功！")
+                                st.rerun()
+                            else:
+                                st.error("授权码无效，请重试")
+                        else:
+                            st.warning("请先输入授权码")
+                with col2:
+                    if st.button("🔄 重新生成", use_container_width=True):
+                        st.session_state.oauth_url = None
+                        st.session_state.oauth_state = None
+                        st.rerun()
+            elif st.session_state.get('oauth_url') == False:
+                st.error("❌ 无法生成授权 URL")
+                st.markdown("请检查 `config/client_secrets.json` 是否正确配置")
         else:
             st.success("✅ 已登入")
             if st.button("🚪 登出", use_container_width=True):

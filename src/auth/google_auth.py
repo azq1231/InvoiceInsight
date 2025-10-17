@@ -85,7 +85,7 @@ class GoogleAuthManager:
                 logger.error(f"Failed to save credentials to file: {file_error}")
     
     def authenticate(self) -> bool:
-        """Perform OAuth authentication flow"""
+        """Check if already authenticated with valid credentials"""
         try:
             if self.creds and self.creds.valid:
                 return True
@@ -96,25 +96,61 @@ class GoogleAuthManager:
                 self._save_credentials()
                 return True
             
+            return False
+            
+        except Exception as e:
+            logger.error(f"Authentication check failed: {e}")
+            return False
+    
+    def get_auth_url(self) -> Optional[tuple[str, any]]:
+        """Get authorization URL and flow for manual OAuth"""
+        try:
             client_secrets_path = self.config.get('oauth.client_secrets_file')
             
             if not client_secrets_path or not Path(client_secrets_path).exists():
-                logger.error("Client secrets file not found. Please configure OAuth credentials.")
-                return False
+                logger.error("Client secrets file not found")
+                return None
             
             flow = InstalledAppFlow.from_client_secrets_file(
                 client_secrets_path,
                 self.scopes
             )
             
-            self.creds = flow.run_local_server(port=0)
+            # Use a simple redirect URI that user can copy code from
+            flow.redirect_uri = 'https://developers.google.com/oauthplayground'
+            
+            auth_url, state = flow.authorization_url(
+                prompt='consent',
+                access_type='offline',
+                include_granted_scopes='true'
+            )
+            
+            # Store flow for later token exchange
+            self._flow = flow
+            
+            return auth_url, state
+            
+        except Exception as e:
+            logger.error(f"Failed to generate auth URL: {e}")
+            return None
+    
+    def authenticate_with_code(self, auth_code: str) -> bool:
+        """Complete authentication using authorization code"""
+        try:
+            if not hasattr(self, '_flow') or not self._flow:
+                logger.error("No OAuth flow initialized. Call get_auth_url first.")
+                return False
+            
+            # Exchange code for credentials
+            self._flow.fetch_token(code=auth_code)
+            self.creds = self._flow.credentials
             self._save_credentials()
             
-            logger.info("Authentication successful")
+            logger.info("Authentication successful with code")
             return True
             
         except Exception as e:
-            logger.error(f"Authentication failed: {e}")
+            logger.error(f"Failed to authenticate with code: {e}")
             return False
     
     def is_authenticated(self) -> bool:
