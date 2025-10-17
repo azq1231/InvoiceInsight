@@ -1,15 +1,19 @@
 # OCR 收支辨識系統 - 專案文件
 
 ## 專案概述
-企業級 PyQt5 桌面應用程式，用於從 Google 相簿中選擇手寫帳單照片，透過雙引擎 OCR (Google Cloud Vision API + Tesseract) 進行文字辨識，並將結構化資料存入 Google 試算表。
+企業級 Streamlit Web 應用程式，用於從 Google 相簿中選擇手寫帳單照片，透過雙引擎 OCR (Google Cloud Vision API + Tesseract) 進行文字辨識，並將結構化資料存入 Google 試算表。
 
-**版本**: 1.0.0  
+**版本**: 2.0.0 (Streamlit)  
 **建立日期**: 2025-10-16  
-**技術棧**: Python 3.11, PyQt5, Google APIs, Tesseract OCR
+**遷移日期**: 2025-10-17  
+**技術棧**: Python 3.11, Streamlit, Google APIs, Tesseract OCR
 
 ## 最近變更
-- 2025-10-16: 初始化專案結構
-- 2025-10-16: 建立基礎 GUI 架構 (主視窗、圖片檢視器、資料編輯器)
+- 2025-10-17: **重大更新：成功遷移到 Streamlit Web 應用** ✨
+- 2025-10-17: 修復所有 API 方法調用匹配問題
+- 2025-10-17: 重新設計分頁邏輯（兼容 Streamlit session state）
+- 2025-10-17: 移除 PyQt5 依賴，改用 Web 界面
+- 2025-10-16: 初始化專案結構（PyQt5 版本）
 - 2025-10-16: 實作 OAuth 2.0 認證模組 (Keyring 加密存儲)
 - 2025-10-16: 配置 YAML 設定檔與日誌系統
 
@@ -103,6 +107,7 @@
 ### 開發中 🚧
 - [ ] 批次處理系統 (工作池、重試邏輯)
 - [ ] API 配額監控與速率限制
+- [ ] ROI 選擇工具整合（使用 streamlit-drawable-canvas）
 
 ### 待規劃 📋
 - [ ] 放大鏡工具實作
@@ -141,13 +146,15 @@
 
 ## 執行方式
 
-### 桌面模式 (本地)
+### Streamlit Web 應用
 ```bash
-python main.py
+streamlit run app.py --server.port 5000 --server.address 0.0.0.0
 ```
 
-### VNC 模式 (Replit)
-透過 VNC 工作流程執行，顯示桌面 GUI 介面。
+### Replit 環境
+點擊 Run 按鈕，應用會自動啟動在 http://0.0.0.0:5000
+
+**舊版桌面應用已存檔於 `archive/pyqt5_gui/`**
 
 ## 注意事項
 - 所有 OAuth Token 使用 keyring 加密存儲
