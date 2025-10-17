@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["freetype", "glibcLocales", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "pkg-config", "tcl", "tesseract", "tk", "xsimd", "zlib", "libGL", "mesa", "xorg.libX11", "xorg.libXext"]
+packages = ["freetype", "glibcLocales", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "pkg-config", "tcl", "tesseract", "tk", "xsimd", "zlib", "libGL", "mesa", "xorg.libX11", "xorg.libXext", "krb5"]
 
 [workflows]
 runButton = "Project"
@@ -27,4 +27,4 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "QT_QPA_PLATFORM=offscreen python main.py"
+args = "python main.py"

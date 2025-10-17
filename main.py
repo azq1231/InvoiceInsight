@@ -6,6 +6,9 @@ Main entry point for the PyQt5 desktop application
 
 import sys
 import os
+
+os.environ['QT_QPA_PLATFORM'] = 'vnc:size=1280x800'
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 
