@@ -9,6 +9,12 @@
 **技術棧**: Python 3.11, Streamlit, Google APIs, Tesseract OCR
 
 ## 最近變更
+- 2025-10-17: **新增上傳照片功能** 🚀
+  - 無需 OAuth 配置即可使用核心 OCR 功能
+  - 支援 JPG/PNG/JPEG 格式照片上傳
+  - 未登入：使用 Tesseract OCR 引擎
+  - 已登入：使用雙引擎 OCR（Vision + Tesseract）
+  - 完整的錯誤處理與使用者體驗優化
 - 2025-10-17: **OAuth 認證流程完全修復** ✅
   - 使用 Google OAuth Playground 作為雲端環境回調
   - 修復 PKCE verifier 不匹配問題（flow 持久化到 session_state）
