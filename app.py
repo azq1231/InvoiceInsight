@@ -248,7 +248,7 @@ def render_sidebar():
             
             st.markdown("---")
             st.subheader("📊 统计资讯")
-            processed_count = len(st.session_state.tracker.get_processed_photos())
+            processed_count = st.session_state.tracker.get_processed_count()
             st.metric("已处理照片", processed_count)
             
             if st.session_state.ocr_result:
