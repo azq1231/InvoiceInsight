@@ -51,8 +51,10 @@ def init_session_state():
         st.session_state.ocr_result = None
     if 'photo_list' not in st.session_state:
         st.session_state.photo_list = []
-    if 'page_token' not in st.session_state:
-        st.session_state.page_token = None
+    if 'photos_loaded_count' not in st.session_state:
+        st.session_state.photos_loaded_count = 0
+    if 'loaded_photo_ids' not in st.session_state:
+        st.session_state.loaded_photo_ids = set()
 
 def authenticate():
     """处理 Google 认证"""
@@ -76,6 +78,8 @@ def logout():
     st.session_state.selected_photo = None
     st.session_state.ocr_result = None
     st.session_state.photo_list = []
+    st.session_state.photos_loaded_count = 0
+    st.session_state.loaded_photo_ids = set()
     logger.info("用户已登出")
 
 def load_photos(page_size=20):
@@ -84,24 +88,46 @@ def load_photos(page_size=20):
         return []
     
     try:
-        photos, next_token = st.session_state.photos_api.list_photos(
-            page_size=page_size,
-            page_token=st.session_state.page_token
-        )
-        st.session_state.page_token = next_token
+        photos = []
+        skip_count = st.session_state.photos_loaded_count
+        current_count = 0
+        loaded_count = 0
+        
+        for item in st.session_state.photos_api.list_media_items(page_size=100):
+            if current_count < skip_count:
+                current_count += 1
+                continue
+            
+            if item['id'] not in st.session_state.loaded_photo_ids:
+                photos.append(item)
+                st.session_state.loaded_photo_ids.add(item['id'])
+                loaded_count += 1
+                
+                if loaded_count >= page_size:
+                    break
+            
+            current_count += 1
+        
+        st.session_state.photos_loaded_count = current_count
+        
+        if loaded_count == 0 and skip_count > 0:
+            st.info("已到达照片列表末尾")
+            logger.info("所有照片已加载完毕")
+        
         return photos
     except Exception as e:
         logger.error(f"载入照片失败: {e}")
         st.error(f"载入照片失败: {e}")
         return []
 
-def download_photo(photo):
+def download_photo(base_url, width=2048, height=2048):
     """下载并缓存照片"""
     try:
-        photo_bytes = st.session_state.cache.get_image(photo['baseUrl'])
+        cache_key = f"{base_url}_{width}x{height}"
+        photo_bytes = st.session_state.cache.get_image(cache_key)
         if not photo_bytes:
-            photo_bytes = st.session_state.photos_api.download_photo(photo['baseUrl'])
-            st.session_state.cache.set_image(photo['baseUrl'], photo_bytes)
+            photo_bytes = st.session_state.photos_api.download_image(base_url, width, height)
+            st.session_state.cache.set_image(cache_key, photo_bytes)
         return photo_bytes
     except Exception as e:
         logger.error(f"下载照片失败: {e}")
@@ -124,16 +150,28 @@ def process_ocr(image_bytes, photo_id):
 def save_to_sheets(data):
     """保存资料到 Google Sheets"""
     try:
-        spreadsheet_id = st.session_state.sheets_api.get_or_create_spreadsheet('OCR 收支记录')
-        rows = st.session_state.sheets_api.format_expense_data(data)
-        result = st.session_state.sheets_api.append_data(spreadsheet_id, rows)
+        if 'spreadsheet_id' not in st.session_state:
+            spreadsheet = st.session_state.sheets_api.create_spreadsheet('OCR 收支记录')
+            st.session_state.spreadsheet_id = spreadsheet['id']
+            logger.info(f"创建新试算表: {spreadsheet['id']}")
+        
+        ocr_results = [{
+            'date': data['date'],
+            'items': data['items'],
+            'photo_id': st.session_state.selected_photo['id']
+        }]
+        
+        result = st.session_state.sheets_api.export_ocr_results(
+            st.session_state.spreadsheet_id,
+            ocr_results
+        )
         
         st.session_state.tracker.mark_processed(
             st.session_state.selected_photo['id'],
             st.session_state.ocr_result
         )
         
-        logger.info(f"资料已保存到 Google Sheets: {spreadsheet_id}")
+        logger.info(f"资料已保存到 Google Sheets: {st.session_state.spreadsheet_id}")
         return result
     except Exception as e:
         logger.error(f"保存到 Google Sheets 失败: {e}")
@@ -194,7 +232,8 @@ def render_photo_gallery():
     with col2:
         if st.button("🗑️ 清空列表"):
             st.session_state.photo_list = []
-            st.session_state.page_token = None
+            st.session_state.photos_loaded_count = 0
+            st.session_state.loaded_photo_ids = set()
             st.rerun()
     
     if st.session_state.photo_list:
@@ -203,8 +242,7 @@ def render_photo_gallery():
             col = cols[idx % 4]
             with col:
                 try:
-                    thumbnail_url = photo['baseUrl'] + '=w200-h200'
-                    photo_bytes = download_photo({'baseUrl': thumbnail_url, 'id': photo['id']})
+                    photo_bytes = download_photo(photo['base_url'], width=200, height=200)
                     if photo_bytes:
                         img = Image.open(io.BytesIO(photo_bytes))
                         st.image(img, use_container_width=True)
@@ -224,7 +262,7 @@ def render_image_viewer():
     if st.session_state.selected_photo:
         st.subheader("🖼️ 照片预览")
         
-        photo_bytes = download_photo(st.session_state.selected_photo)
+        photo_bytes = download_photo(st.session_state.selected_photo['base_url'])
         if photo_bytes:
             img = Image.open(io.BytesIO(photo_bytes))
             st.image(img, use_container_width=True)
