@@ -141,16 +141,28 @@ class GoogleAuthManager:
                 logger.error("No OAuth flow initialized. Call get_auth_url first.")
                 return False
             
+            # Clean the auth code (remove whitespace, newlines)
+            cleaned_code = auth_code.strip()
+            
+            if not cleaned_code:
+                logger.error("Empty authorization code")
+                return False
+            
             # Exchange code for credentials
-            self._flow.fetch_token(code=auth_code)
+            self._flow.fetch_token(code=cleaned_code)
             self.creds = self._flow.credentials
             self._save_credentials()
+            
+            # Clear the flow after successful authentication
+            self._flow = None
             
             logger.info("Authentication successful with code")
             return True
             
         except Exception as e:
             logger.error(f"Failed to authenticate with code: {e}")
+            # Clear the flow on error so user can try again
+            self._flow = None
             return False
     
     def is_authenticated(self) -> bool:

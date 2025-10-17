@@ -208,10 +208,16 @@ def render_sidebar():
                 st.markdown("**步骤 1:** 点击下方链接打开 Google 授权")
                 st.markdown(f"[🔗 打开 Google 授权页面]({st.session_state.oauth_url})")
                 st.markdown("**步骤 2:** 授权后，您会被导向 OAuth Playground")
-                st.markdown("**步骤 3:** 复制页面上显示的**授权码**（code）")
-                st.markdown("**步骤 4:** 将授权码粘贴到下方输入框")
+                st.markdown("**步骤 3:** 从 URL 中复制授权码")
+                st.info("💡 提示：URL 格式为 `...?code=授权码&scope=...`，只需复制 `code=` 后面的部分（到 `&` 前）")
+                st.markdown("**步骤 4:** 将授权码粘贴到下方输入框（自动去除空格）")
                 
-                auth_code = st.text_input("📋 授权码", type="password", help="从 OAuth Playground 复制的 code")
+                auth_code = st.text_input(
+                    "📋 授权码", 
+                    type="password", 
+                    help="从 OAuth Playground URL 中复制的 code 参数值",
+                    placeholder="例如：4/0AanRRruabc123..."
+                )
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -234,8 +240,12 @@ def render_sidebar():
                             st.warning("请先输入授权码")
                 with col2:
                     if st.button("🔄 重新生成", use_container_width=True):
+                        # 清理所有 OAuth 状态
                         st.session_state.oauth_url = None
                         st.session_state.oauth_state = None
+                        # 清理 auth_manager 中的 flow 对象
+                        if hasattr(st.session_state.auth_manager, '_flow'):
+                            st.session_state.auth_manager._flow = None
                         st.rerun()
             elif st.session_state.get('oauth_url') == False:
                 st.error("❌ 无法生成授权 URL")
