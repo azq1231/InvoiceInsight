@@ -9,6 +9,11 @@
 **技術棧**: Python 3.11, Streamlit, Google APIs, Tesseract OCR
 
 ## 最近變更
+- 2025-10-17: **OAuth 認證流程完全修復** ✅
+  - 使用 Google OAuth Playground 作為雲端環境回調
+  - 修復 PKCE verifier 不匹配問題（flow 持久化到 session_state）
+  - 實作手動授權碼輸入機制
+  - 完整的故障排查指南（OAUTH_SETUP_GUIDE.md）
 - 2025-10-17: **重大更新：成功遷移到 Streamlit Web 應用** ✨
 - 2025-10-17: 修復所有 API 方法調用匹配問題
 - 2025-10-17: 重新設計分頁邏輯（兼容 Streamlit session state）
