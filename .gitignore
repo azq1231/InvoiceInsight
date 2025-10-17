@@ -37,6 +37,9 @@ env/
 *.swo
 *~
 
+# Tool-specific files (e.g., Replit state)
+.local/
+
 # Data and Cache
 data/cache/
 data/logs/

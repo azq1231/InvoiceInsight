@@ -34,7 +34,10 @@ def init_session_state():
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     if 'auth_manager' not in st.session_state:
-        st.session_state.auth_manager = GoogleAuthManager()
+        # 修复 redirect_uri_mismatch 错误
+        # 在初始化时就传入固定的回调地址
+        redirect_uri = "http://localhost:8501"
+        st.session_state.auth_manager = GoogleAuthManager(redirect_uri=redirect_uri)
     if 'photos_api' not in st.session_state:
         st.session_state.photos_api = None
     if 'sheets_api' not in st.session_state:
@@ -55,37 +58,38 @@ def init_session_state():
         st.session_state.photos_loaded_count = 0
     if 'loaded_photo_ids' not in st.session_state:
         st.session_state.loaded_photo_ids = set()
+    if 'oauth_flow' not in st.session_state:
+        st.session_state.oauth_flow = None
 
 def authenticate():
     """处理 Google 认证"""
+    # 此函数应在凭证获取后调用，以初始化所有 API 服务
     try:
-        if st.session_state.auth_manager.authenticate():
-            creds = st.session_state.auth_manager.get_credentials()
-            st.session_state.photos_api = GooglePhotosAPI(creds)
-            st.session_state.sheets_api = GoogleSheetsAPI(creds)
-            st.session_state.orchestrator = OCROrchestrator(creds)
-            st.session_state.authenticated = True
-            logger.info("用户已成功认证")
-            return True
-        return False
+        creds = st.session_state.auth_manager.get_credentials()
+        if not creds:
+            logger.warning("authenticate() 被调用，但没有可用的凭证")
+            return False
+
+        st.session_state.photos_api = GooglePhotosAPI(creds)
+        st.session_state.sheets_api = GoogleSheetsAPI(creds)
+        st.session_state.orchestrator = OCROrchestrator(creds)
+        st.session_state.authenticated = True
+        logger.info("用户已成功认证")
+        return True
     except Exception as e:
         logger.error(f"认证失败: {e}")
+        st.error(f"初始化 API 服务失败: {e}")
         return False
 
 def logout():
     """登出并清除认证"""
-    st.session_state.auth_manager.logout()
-    st.session_state.authenticated = False
-    st.session_state.photos_api = None
-    st.session_state.sheets_api = None
-    st.session_state.orchestrator = None
-    st.session_state.selected_photo = None
-    st.session_state.ocr_result = None
-    st.session_state.photo_list = []
-    st.session_state.photos_loaded_count = 0
-    st.session_state.loaded_photo_ids = set()
-    st.session_state.oauth_url = None
-    st.session_state.oauth_state = None
+    if 'auth_manager' in st.session_state:
+        st.session_state.auth_manager.logout()
+    
+    # 迭代并清除所有 session state 键，以确保完全重置
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+        
     logger.info("用户已登出")
 
 def load_photos(page_size=20):
@@ -191,65 +195,24 @@ def render_sidebar():
         st.markdown("---")
         
         if not st.session_state.authenticated:
-            st.info("请先登入 Google 帐号")
-            
-            # Initialize auth URL only once
-            if 'oauth_url' not in st.session_state or st.session_state.oauth_url is None:
+            st.info("请登入 Google 以使用完整功能")
+
+            if st.button("🔗 开始 Google 授权", use_container_width=True):
                 result = st.session_state.auth_manager.get_auth_url()
                 if result:
-                    auth_url, state = result
+                    auth_url, state, flow = result
                     st.session_state.oauth_url = auth_url
                     st.session_state.oauth_state = state
+                    st.session_state.oauth_flow = flow # 保存 flow 对象
                 else:
-                    st.session_state.oauth_url = False  # Mark as failed
-            
+                    st.session_state.oauth_url = False # Mark as failed to prevent re-rendering link
+                    st.error("❌ 无法生成授权 URL。请检查 `client_secrets.json` 配置和网络连接。")
+
             if st.session_state.get('oauth_url'):
-                st.warning("⚠️ 请按照以下步骤完成授权")
-                st.markdown("**步骤 1:** 点击下方链接打开 Google 授权")
-                st.markdown(f"[🔗 打开 Google 授权页面]({st.session_state.oauth_url})")
-                st.markdown("**步骤 2:** 授权后，您会被导向 OAuth Playground")
-                st.markdown("**步骤 3:** 从 URL 中复制授权码")
-                st.info("💡 提示：URL 格式为 `...?code=授权码&scope=...`，只需复制 `code=` 后面的部分（到 `&` 前）")
-                st.markdown("**步骤 4:** 将授权码粘贴到下方输入框（自动去除空格）")
-                
-                auth_code = st.text_input(
-                    "📋 授权码", 
-                    type="password", 
-                    help="从 OAuth Playground URL 中复制的 code 参数值",
-                    placeholder="例如：4/0AanRRruabc123..."
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ 确认登入", use_container_width=True):
-                        if auth_code:
-                            if st.session_state.auth_manager.authenticate_with_code(auth_code):
-                                creds = st.session_state.auth_manager.get_credentials()
-                                st.session_state.photos_api = GooglePhotosAPI(creds)
-                                st.session_state.sheets_api = GoogleSheetsAPI(creds)
-                                st.session_state.orchestrator = OCROrchestrator(creds)
-                                st.session_state.authenticated = True
-                                # Clear OAuth state
-                                st.session_state.oauth_url = None
-                                st.session_state.oauth_state = None
-                                st.success("登入成功！")
-                                st.rerun()
-                            else:
-                                st.error("授权码无效，请重试")
-                        else:
-                            st.warning("请先输入授权码")
-                with col2:
-                    if st.button("🔄 重新生成", use_container_width=True):
-                        # 清理所有 OAuth 状态
-                        st.session_state.oauth_url = None
-                        st.session_state.oauth_state = None
-                        # 清理 auth_manager 中的 flow 对象
-                        if hasattr(st.session_state.auth_manager, '_flow'):
-                            st.session_state.auth_manager._flow = None
-                        st.rerun()
-            elif st.session_state.get('oauth_url') == False:
-                st.error("❌ 无法生成授权 URL")
-                st.markdown("请检查 `config/client_secrets.json` 是否正确配置")
+                st.markdown(f'**步骤 1:** <a href="{st.session_state.oauth_url}" target="_blank" rel="noopener noreferrer">点击这里打开 Google 授权页面</a>', unsafe_allow_html=True)
+                st.markdown("**步骤 2:** 授权后，从浏览器地址栏复制授权码。")
+                st.info("💡 提示：授权码在 `code=` 和 `&` 之间。")
+                st.info("授权成功后，此页面将自动刷新。")
         else:
             st.success("✅ 已登入")
             if st.button("🚪 登出", use_container_width=True):
@@ -443,27 +406,19 @@ def render_upload_tab():
             if st.button("🚀 开始辨识", type="primary", use_container_width=True):
                 with st.spinner("正在使用双引擎 OCR 辨识中..."):
                     try:
-                        # 将图片转换为字节
-                        from io import BytesIO
-                        img_bytes = BytesIO()
-                        image.save(img_bytes, format='JPEG')
-                        image_bytes = img_bytes.getvalue()
+                        image_bytes = uploaded_file.getvalue()
                         
                         # 执行 OCR（不需要 Google credentials 也能使用 Tesseract）
-                        if st.session_state.authenticated and st.session_state.orchestrator:
-                            # 有登入：使用完整的双引擎 OCR
-                            result = st.session_state.orchestrator.process_image(
-                                image_bytes, 
-                                photo_id=f"uploaded_{uploaded_file.name}"
-                            )
-                        else:
-                            # 未登入：仅使用 Tesseract
-                            from src.processing.ocr_orchestrator import OCROrchestrator
-                            orchestrator = OCROrchestrator(None)  # 不传入 credentials
-                            result = orchestrator.process_image(
-                                image_bytes,
-                                photo_id=f"uploaded_{uploaded_file.name}"
-                            )
+                        # 如果未登入，orchestrator 将在内部处理（使用 Tesseract）
+                        # 如果已登入，它会使用完整的双引擎
+                        if 'orchestrator' not in st.session_state or st.session_state.orchestrator is None:
+                            creds = st.session_state.auth_manager.get_credentials()
+                            st.session_state.orchestrator = OCROrchestrator(creds)
+
+                        result = st.session_state.orchestrator.process_image(
+                            image_bytes, 
+                            photo_id=f"uploaded_{uploaded_file.name}"
+                        )
                         
                         if result and result.get('status') == 'success':
                             st.session_state.ocr_result = result
@@ -473,7 +428,6 @@ def render_upload_tab():
                                 'base_url': None  # 使用一致的 key 名称
                             }
                             st.success("✅ 辨识完成！")
-                            st.rerun()
                         else:
                             error_msg = result.get('error', '未知错误') if result else '处理失败'
                             st.error(f"❌ 辨识失败：{error_msg}")
@@ -495,6 +449,50 @@ def main():
     """主应用程式"""
     init_session_state()
     
+    # 确保 orchestrator 在应用开始时就被初始化
+    # --- 新增：处理 OAuth 回调 ---
+    query_params = st.query_params
+    auth_code = query_params.get("code")
+    state = query_params.get("state")
+
+    if auth_code and not st.session_state.authenticated:
+        with st.spinner("正在完成 Google 登入..."):
+            logger.info("检测到 URL 中的授权码，正在尝试认证...")
+            
+            # 恢复 flow 对象到 auth_manager 实例
+            if st.session_state.oauth_flow:
+                st.session_state.auth_manager._flow = st.session_state.oauth_flow
+                logger.info("OAuth flow has been restored from session state.")
+
+            # 将从 URL 获取的 code 和 state 传递给认证方法
+            if st.session_state.auth_manager.authenticate_with_code(auth_code, state=state) and authenticate():
+                logger.info("通过 URL 授权码认证成功。")
+                # 清理 URL 中的 code 和 state，防止重复使用
+                st.session_state.oauth_flow = None # 清理已使用的 flow
+                st.session_state.oauth_url = None
+                st.query_params.clear()
+                st.rerun() # 重新运行脚本以刷新状态
+            else:
+                logger.error("使用 URL 中的授权码认证失败。")
+                # 如果后端记录了更详细的错误，展示给用户以便排查
+                detailed = None
+                try:
+                    detailed = st.session_state.auth_manager.last_error
+                except Exception:
+                    detailed = None
+
+                if detailed:
+                    st.error(f"授权失败：{detailed}。请检查 `config/client_secrets.json` 中的 redirect_uris 是否包含当前应用的回调地址（例如 http://localhost:8501）。")
+                else:
+                    st.error("授权码无效或已过期，请重新尝试登入。请确认你在授权页面复制的 code 参数完整且未过期（通常 1 分钟内使用）。")
+                st.session_state.oauth_flow = None # 清理已使用的 flow
+                st.query_params.clear()
+    # --- 结束：处理 OAuth 回调 ---
+
+    if st.session_state.orchestrator is None:
+        creds = st.session_state.auth_manager.get_credentials()
+        st.session_state.orchestrator = OCROrchestrator(creds)
+
     render_sidebar()
     
     st.title("🧾 OCR 收支辨识系统")
