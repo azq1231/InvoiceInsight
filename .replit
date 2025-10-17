@@ -16,15 +16,24 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "OCR Desktop App"
+args = "OCR Web App"
 
 [[workflows.workflow]]
-name = "OCR Desktop App"
+name = "OCR Web App"
 author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "streamlit run app.py --server.port 5000 --server.address 0.0.0.0"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 43967
+externalPort = 3000
