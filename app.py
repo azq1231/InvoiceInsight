@@ -399,6 +399,84 @@ def render_ocr_results():
         else:
             st.info("未辨识到项目资料")
 
+def render_upload_tab():
+    """渲染上传照片标签页"""
+    st.subheader("📤 上传照片进行辨识")
+    st.markdown("支持 JPG、PNG、JPEG 格式的照片")
+    
+    uploaded_file = st.file_uploader(
+        "选择要辨识的照片",
+        type=["jpg", "jpeg", "png"],
+        help="上传手写收据或帐单的照片"
+    )
+    
+    if uploaded_file:
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.subheader("🖼️ 上传的照片")
+            image = Image.open(uploaded_file)
+            st.image(image, use_container_width=True)
+            
+            # 显示照片信息
+            st.caption(f"文件名: {uploaded_file.name}")
+            st.caption(f"文件大小: {uploaded_file.size / 1024:.1f} KB")
+            st.caption(f"图片尺寸: {image.size[0]} x {image.size[1]}")
+        
+        with col2:
+            st.subheader("🤖 OCR 辨识")
+            
+            if st.button("🚀 开始辨识", type="primary", use_container_width=True):
+                with st.spinner("正在使用双引擎 OCR 辨识中..."):
+                    try:
+                        # 将图片转换为字节
+                        from io import BytesIO
+                        img_bytes = BytesIO()
+                        image.save(img_bytes, format='JPEG')
+                        image_bytes = img_bytes.getvalue()
+                        
+                        # 执行 OCR（不需要 Google credentials 也能使用 Tesseract）
+                        if st.session_state.authenticated and st.session_state.orchestrator:
+                            # 有登入：使用完整的双引擎 OCR
+                            result = st.session_state.orchestrator.process_image(
+                                image_bytes, 
+                                photo_id=f"uploaded_{uploaded_file.name}"
+                            )
+                        else:
+                            # 未登入：仅使用 Tesseract
+                            from src.processing.ocr_orchestrator import OCROrchestrator
+                            orchestrator = OCROrchestrator(None)  # 不传入 credentials
+                            result = orchestrator.process_image(
+                                image_bytes,
+                                photo_id=f"uploaded_{uploaded_file.name}"
+                            )
+                        
+                        if result and result.get('status') == 'success':
+                            st.session_state.ocr_result = result
+                            st.session_state.selected_photo = {
+                                'id': 'uploaded',
+                                'filename': uploaded_file.name,
+                                'baseUrl': None
+                            }
+                            st.success("✅ 辨识完成！")
+                            st.rerun()
+                        else:
+                            error_msg = result.get('error', '未知错误') if result else '处理失败'
+                            st.error(f"❌ 辨识失败：{error_msg}")
+                    
+                    except Exception as e:
+                        logger.error(f"上传照片 OCR 失败: {e}")
+                        st.error(f"处理失败: {e}")
+            
+            if not st.session_state.authenticated:
+                st.info("💡 提示：未登入时仅使用 Tesseract 引擎辨识")
+                st.info("登入后可使用 Google Vision API 提升准确度")
+    
+    # 如果已有辨识结果，显示在下方
+    if st.session_state.ocr_result and st.session_state.selected_photo and st.session_state.selected_photo.get('id') == 'uploaded':
+        st.markdown("---")
+        render_ocr_results()
+
 def main():
     """主应用程式"""
     init_session_state()
@@ -409,21 +487,39 @@ def main():
     st.markdown("手写收据智能辨识 | 双引擎 OCR | Google Sheets 整合")
     st.markdown("---")
     
+    # 创建 tabs：上传照片（主要）和 Google Photos（可选）
     if not st.session_state.authenticated:
-        st.info("👈 请先在侧边栏登入 Google 帐号")
-    else:
-        tab1, tab2, tab3 = st.tabs(["📷 选择照片", "🖼️ 照片预览", "📝 辨识结果"])
+        # 未登入：只显示上传功能
+        tab1, tab2 = st.tabs(["📤 上传照片", "📸 Google 相簿 (需登入)"])
         
         with tab1:
-            render_photo_gallery()
+            render_upload_tab()
         
         with tab2:
+            st.info("👈 请先在侧边栏登入 Google 帐号以使用此功能")
+            st.markdown("""
+            ### Google 相簿功能
+            - 📸 从 Google 相簿选择照片
+            - 🔄 自动同步照片列表
+            - 💾 直接保存到 Google Sheets
+            """)
+    else:
+        # 已登入：显示所有功能
+        tab1, tab2, tab3, tab4 = st.tabs(["📤 上传照片", "📷 Google 相簿", "🖼️ 照片预览", "📝 辨识结果"])
+        
+        with tab1:
+            render_upload_tab()
+        
+        with tab2:
+            render_photo_gallery()
+        
+        with tab3:
             if st.session_state.selected_photo:
                 render_image_viewer()
             else:
-                st.info("请先在「选择照片」标签页选择一张照片")
+                st.info("请先在「上传照片」或「Google 相簿」选择照片")
         
-        with tab3:
+        with tab4:
             if st.session_state.ocr_result:
                 render_ocr_results()
             else:

@@ -21,7 +21,7 @@ class OCROrchestrator:
     def __init__(self, credentials=None):
         self.config = get_config()
         
-        self.vision_enabled = self.config.get('ocr.google_vision.enabled', True)
+        self.vision_enabled = self.config.get('ocr.google_vision.enabled', True) and credentials is not None
         self.tesseract_enabled = self.config.get('ocr.tesseract.enabled', True)
         
         self.vision_ocr = VisionOCR(credentials) if self.vision_enabled else None
@@ -31,7 +31,10 @@ class OCROrchestrator:
         self.extractor = DataExtractor()
         self.validator = DataValidator()
         
-        logger.info("OCR Orchestrator initialized")
+        if credentials is None:
+            logger.info("OCR Orchestrator initialized (Tesseract only mode)")
+        else:
+            logger.info("OCR Orchestrator initialized (dual-engine mode)")
     
     def process_image(self, image_bytes: bytes, photo_id: str = None) -> Dict:
         """Process image through complete OCR pipeline"""
