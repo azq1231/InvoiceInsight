@@ -4,19 +4,48 @@ import logging
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QSplitter, QMenuBar, QMenu, QAction, QStatusBar,
-    QPushButton, QLabel, QMessageBox
+    QPushButton, QLabel, QMessageBox, QProgressDialog,
+    QDialog
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
+from PyQt5.QtGui import QIcon, QPixmap, QImage
 
 from src.utils.config import get_config
 from src.gui.image_viewer import ImageViewerPanel
 from src.gui.data_editor import DataEditorPanel
 from src.gui.photo_selector import PhotoSelectorDialog
 from src.auth.google_auth import GoogleAuthManager
+from src.api.google_photos import GooglePhotosAPI
+from src.api.google_sheets import GoogleSheetsAPI
+from src.processing.ocr_orchestrator import OCROrchestrator
+from src.processing.processed_tracker import ProcessedPhotoTracker
+from src.cache.image_cache import ImageCache
 
 
 logger = logging.getLogger(__name__)
+
+
+class OCRWorker(QThread):
+    """Worker thread for OCR processing"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(str)
+    
+    def __init__(self, orchestrator, image_bytes, photo_id):
+        super().__init__()
+        self.orchestrator = orchestrator
+        self.image_bytes = image_bytes
+        self.photo_id = photo_id
+    
+    def run(self):
+        """Run OCR processing"""
+        try:
+            self.progress.emit("正在執行 OCR 辨識...")
+            result = self.orchestrator.process_image(self.image_bytes, self.photo_id)
+            self.finished.emit(result)
+        except Exception as e:
+            logger.error(f"OCR processing error: {e}")
+            self.error.emit(str(e))
 
 
 class MainWindow(QMainWindow):
@@ -26,7 +55,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = get_config()
         self.auth_manager = None
+        self.photos_api = None
+        self.sheets_api = None
+        self.orchestrator = None
+        self.tracker = ProcessedPhotoTracker()
+        self.cache = ImageCache()
+        
         self.current_photo = None
+        self.current_photo_bytes = None
+        self.current_ocr_result = None
+        self.ocr_worker = None
         
         self._init_ui()
         self._setup_shortcuts()
@@ -125,6 +163,16 @@ class MainWindow(QMainWindow):
         self.select_photos_btn.setEnabled(False)
         toolbar_layout.addWidget(self.select_photos_btn)
         
+        self.ocr_btn = QPushButton("開始 OCR 辨識")
+        self.ocr_btn.clicked.connect(self._handle_start_ocr)
+        self.ocr_btn.setEnabled(False)
+        toolbar_layout.addWidget(self.ocr_btn)
+        
+        self.save_btn = QPushButton("核准並儲存")
+        self.save_btn.clicked.connect(self._handle_save)
+        self.save_btn.setEnabled(False)
+        toolbar_layout.addWidget(self.save_btn)
+        
         toolbar_layout.addStretch()
         
         self.status_label = QLabel("請先登入 Google 帳號")
@@ -199,11 +247,17 @@ class MainWindow(QMainWindow):
     def _on_login_success(self):
         """Handle successful login"""
         self.status_label.setText("已登入")
-        self.login_btn.setText("已登入")
+        self.login_btn.setText("已登入 ✓")
         self.login_btn.setEnabled(False)
         self.select_photos_btn.setEnabled(True)
         self.status_bar.showMessage("Google 帳號已連接")
-        logger.info("Login successful")
+        
+        creds = self.auth_manager.get_credentials()
+        self.photos_api = GooglePhotosAPI(creds)
+        self.sheets_api = GoogleSheetsAPI(creds)
+        self.orchestrator = OCROrchestrator(creds)
+        
+        logger.info("Login successful, APIs initialized")
     
     def _handle_logout(self):
         """Handle Google logout"""
@@ -213,23 +267,182 @@ class MainWindow(QMainWindow):
             self.login_btn.setText("登入 Google")
             self.login_btn.setEnabled(True)
             self.select_photos_btn.setEnabled(False)
+            self.ocr_btn.setEnabled(False)
+            self.save_btn.setEnabled(False)
             self.status_bar.showMessage("已登出")
             logger.info("Logout successful")
     
     def _handle_select_photos(self):
         """Handle photo selection"""
-        self.status_label.setText("功能開發中...")
-        logger.info("Photo selection requested")
+        try:
+            if not self.photos_api:
+                QMessageBox.warning(self, "警告", "請先登入 Google 帳號")
+                return
+            
+            creds = self.auth_manager.get_credentials()
+            dialog = PhotoSelectorDialog(creds, self)
+            
+            if dialog.exec_() == QDialog.Accepted:
+                photo = dialog.get_selected_photo()
+                if photo:
+                    self._load_photo(photo)
+            
+        except Exception as e:
+            logger.error(f"Photo selection failed: {e}")
+            QMessageBox.critical(self, "錯誤", f"選擇照片失敗: {str(e)}")
+    
+    def _load_photo(self, photo):
+        """Load selected photo"""
+        try:
+            self.current_photo = photo
+            self.status_label.setText(f"正在載入照片...")
+            
+            photo_bytes = self.cache.get_image(photo['baseUrl'], is_thumbnail=False)
+            
+            if not photo_bytes:
+                photo_bytes = self.photos_api.download_photo(photo['baseUrl'])
+                if photo_bytes:
+                    self.cache.set_image(photo['baseUrl'], photo_bytes, is_thumbnail=False)
+            
+            if photo_bytes:
+                self.current_photo_bytes = photo_bytes
+                
+                qimage = QImage.fromData(photo_bytes)
+                pixmap = QPixmap.fromImage(qimage)
+                
+                self.image_viewer.set_image(pixmap)
+                
+                self.ocr_btn.setEnabled(True)
+                self.status_label.setText(f"已載入: {photo.get('filename', 'Untitled')}")
+                
+                if self.tracker.is_processed(photo['id']):
+                    self.status_bar.showMessage("此照片已處理過")
+                else:
+                    self.status_bar.showMessage("就緒 - 可開始 OCR 辨識")
+            
+        except Exception as e:
+            logger.error(f"Failed to load photo: {e}")
+            QMessageBox.critical(self, "錯誤", f"載入照片失敗: {str(e)}")
     
     def _handle_start_ocr(self):
         """Handle OCR start"""
-        self.status_label.setText("OCR 功能開發中...")
-        logger.info("OCR requested")
+        if not self.current_photo_bytes:
+            QMessageBox.warning(self, "警告", "請先選擇一張照片")
+            return
+        
+        try:
+            self.ocr_btn.setEnabled(False)
+            self.save_btn.setEnabled(False)
+            self.status_label.setText("OCR 辨識中...")
+            
+            self.ocr_worker = OCRWorker(
+                self.orchestrator,
+                self.current_photo_bytes,
+                self.current_photo['id']
+            )
+            self.ocr_worker.progress.connect(self._on_ocr_progress)
+            self.ocr_worker.finished.connect(self._on_ocr_finished)
+            self.ocr_worker.error.connect(self._on_ocr_error)
+            self.ocr_worker.start()
+            
+        except Exception as e:
+            logger.error(f"OCR start failed: {e}")
+            QMessageBox.critical(self, "錯誤", f"OCR 啟動失敗: {str(e)}")
+            self.ocr_btn.setEnabled(True)
+    
+    def _on_ocr_progress(self, message):
+        """Handle OCR progress update"""
+        self.status_label.setText(message)
+    
+    def _on_ocr_finished(self, result):
+        """Handle OCR completion"""
+        self.current_ocr_result = result
+        
+        if result['status'] == 'success':
+            extracted = result['extracted_data']
+            
+            self.data_editor.set_data(extracted)
+            
+            self.save_btn.setEnabled(True)
+            self.ocr_btn.setEnabled(True)
+            
+            confidence = result['ocr_result'].get('confidence', 0)
+            self.status_label.setText(f"OCR 完成 (信心度: {confidence:.1%})")
+            
+            if result.get('needs_review'):
+                self.status_bar.showMessage("⚠️ 偵測到異常，請仔細核對資料")
+            else:
+                self.status_bar.showMessage("OCR 辨識完成，請核對資料")
+        else:
+            QMessageBox.critical(self, "錯誤", f"OCR 失敗: {result.get('error', 'Unknown error')}")
+            self.ocr_btn.setEnabled(True)
+    
+    def _on_ocr_error(self, error_msg):
+        """Handle OCR error"""
+        QMessageBox.critical(self, "OCR 錯誤", f"OCR 處理失敗: {error_msg}")
+        self.ocr_btn.setEnabled(True)
+        self.status_label.setText("OCR 失敗")
+    
+    def _handle_save(self):
+        """Handle save to Google Sheets"""
+        if not self.current_ocr_result:
+            QMessageBox.warning(self, "警告", "沒有資料可儲存")
+            return
+        
+        try:
+            data = self.data_editor.get_data()
+            
+            reply = QMessageBox.question(
+                self,
+                "確認儲存",
+                f"確定要將資料儲存到 Google Sheets 嗎？\n\n"
+                f"日期: {data['date']}\n"
+                f"項目數: {len(data['items'])}\n"
+                f"總計: ${data.get('declared_total', data.get('calculated_total', 0)):.2f}",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self._save_to_sheets(data)
+                
+        except Exception as e:
+            logger.error(f"Save failed: {e}")
+            QMessageBox.critical(self, "錯誤", f"儲存失敗: {str(e)}")
+    
+    def _save_to_sheets(self, data):
+        """Save data to Google Sheets"""
+        try:
+            self.status_label.setText("正在儲存到 Google Sheets...")
+            
+            spreadsheet_name = self.config.get('google_sheets.spreadsheet_name', 'OCR 收支記錄')
+            
+            spreadsheet_id = self.sheets_api.get_or_create_spreadsheet(spreadsheet_name)
+            
+            rows = self.sheets_api.format_expense_data(data)
+            
+            self.sheets_api.append_data(spreadsheet_id, rows)
+            
+            self.tracker.mark_processed(self.current_photo['id'], self.current_ocr_result)
+            
+            QMessageBox.information(
+                self,
+                "儲存成功",
+                f"資料已成功儲存到 Google Sheets\n試算表: {spreadsheet_name}"
+            )
+            
+            self.status_label.setText("儲存完成")
+            self.status_bar.showMessage("資料已儲存到 Google Sheets")
+            self.save_btn.setEnabled(False)
+            
+            logger.info(f"Data saved to Google Sheets: {spreadsheet_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save to Sheets: {e}")
+            QMessageBox.critical(self, "儲存錯誤", f"儲存到 Google Sheets 失敗: {str(e)}")
     
     def _handle_batch_ocr(self):
         """Handle batch OCR"""
-        self.status_label.setText("批次 OCR 功能開發中...")
-        logger.info("Batch OCR requested")
+        QMessageBox.information(self, "批次辨識", "批次辨識功能即將推出")
     
     def _handle_zoom_in(self):
         """Handle zoom in"""
@@ -251,4 +464,5 @@ class MainWindow(QMainWindow):
             f"<p>版本: {version}</p>"
             f"<p>企業級手寫帳單自動辨識與整理工具</p>"
             f"<p>使用 Google Cloud Vision API 與 Tesseract OCR</p>"
+            f"<p>雙引擎智能融合，自動異常檢測</p>"
         )
