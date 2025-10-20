@@ -1,19 +1,28 @@
+# === 應用程式基本設定 ===
 app:
+  # 應用程式名稱
   name: "OCR Expense Tracker"
+  # 應用程式版本
   version: "1.0.0"
 
+# === Google OAuth 2.0 授權設定 ===
 oauth:
+  # Google OAuth 客戶端密鑰檔案的路徑
   client_secrets_file: "config/client_secrets.json"
+  # 向 Google 請求的 API 授權範圍
   scopes:
-    - "https://www.googleapis.com/auth/userinfo.email"
-    - "https://www.googleapis.com/auth/userinfo.profile"
-    - "https://www.googleapis.com/auth/photoslibrary"
-    - "openid"
-    - "https://www.googleapis.com/auth/drive.readonly"
-    - "https://www.googleapis.com/auth/cloud-vision"
+    - "https://www.googleapis.com/auth/userinfo.email"      # 讀取使用者 email
+    - "https://www.googleapis.com/auth/userinfo.profile"    # 讀取使用者基本個人資料 (姓名、頭像等)
+    - "https://www.googleapis.com/auth/photoslibrary"       # 讀取 Google Photos 照片
+    - "openid"                                              # OpenID Connect 標準
+    - "https://www.googleapis.com/auth/drive.readonly"     # 唯讀 Google Drive 檔案的權限
+    - "https://www.googleapis.com/auth/cloud-vision"       # 使用 Google Cloud Vision API 的權限
 
+# === Firebase 專案設定 ===
 firebase:
+  # Firebase 服務帳戶金鑰的路徑 (用於後端驗證)
   service_account_key_path: "config/firebase-service-account.json"
+  # Firebase Web 應用程式設定 (用於前端)
   web_app_config:
     apiKey: "AIzaSyA0--b6pfvmg-NeXASKTQJgIVGRNKoHrd8"
     authDomain: "invoiceinsight-v2.firebaseapp.com"
@@ -22,78 +31,136 @@ firebase:
     messagingSenderId: "1071501339173"
     appId: "1:1071501339173:web:79005bef1692058b022dcc"
 
+# === 快取設定 ===
 cache:
+  # 記憶體中快取的最大項目數
   memory_max_size: 100
+  # 磁碟快取的資料夾路徑
   disk_cache_dir: "data/cache"
+  # 縮圖的快取時間 (秒)
   thumbnail_ttl: 3600
+  # 完整圖片的快取時間 (秒)
   image_ttl: 1800
 
+# === OCR 引擎設定 ===
 ocr:
+  # --- Google Vision API 設定 ---
   google_vision:
+    # 是否啟用 Google Vision OCR
     enabled: true
+    # 信心度門檻：OCR 引擎回傳的整體信心度分數必須高於此值，才會被初步接受。範圍 0.0 - 1.0。
     confidence_threshold: 0.7
+    # 特徵類型：告訴 Google Vision API 要執行的辨識類型。
+    # "DOCUMENT_TEXT_DETECTION" 適用於文件和密集文字。
+    # "TEXT_DETECTION" 適用於一般圖片中的文字。
     feature_type: "DOCUMENT_TEXT_DETECTION"
   
+  # --- Tesseract OCR 設定 ---
   tesseract:
+    # 是否啟用 Tesseract OCR (當 Google Vision 失敗或被禁用時，作為備援)
     enabled: true
+    # 信心度門檻：與 Google Vision 的門檻意義相同。
     confidence_threshold: 0.6
+    # 辨識語言：'chi_tra' 是繁體中文，'eng' 是英文。
     language: "chi_tra+eng"
+    # Tesseract 的額外設定參數，例如 '--psm 3' 是指頁面分段模式 (Page Segmentation Mode)。
     config: "--psm 3"
   
+  # --- OCR 結果融合設定 (當兩個引擎都啟用時) ---
   fusion:
+    # 融合演算法名稱
     algorithm: "weighted_dempster_shafer"
+    # Google Vision 結果的權重
     google_vision_weight: 0.7
+    # Tesseract 結果的權重
     tesseract_weight: 0.3
+    # 融合後必須達到的最低信心度
     min_confidence_threshold: 0.5
 
+# === 資料處理設定 ===
 processing:
+  # --- 批次處理設定 ---
   batch:
+    # 同時處理的最大工作執行緒數量
     max_workers: 3
+    # 工作佇列的類型 (例如 sqlite 或 memory)
     queue_type: "sqlite"
+    # SQLite 佇列的資料庫檔案路徑
     queue_path: "data/work_queue.db"
   
+  # --- 失敗重試設定 ---
   retry:
+    # 最大重試次數
     max_attempts: 3
+    # 是否使用指數退避策略 (每次重試的等待時間會加倍)
     exponential_backoff: true
+    # 指數退避的基礎秒數
     backoff_base: 2
+    # 是否加入隨機延遲 (避免同時重試)
     jitter: true
 
+# === API 配額與速率限制 ===
 api_quota:
   google_vision:
+    # 每分鐘請求次數上限
     requests_per_minute: 1800
+    # 當用量達到上限的百分之多少時，觸發警告或備援機制
     soft_limit_percent: 80
+    # 當達到配額時，是否自動切換到 Tesseract
     fallback_to_tesseract: true
   
   rate_limiting:
+    # 速率限制演算法 (例如 token_bucket 或 leaky_bucket)
     algorithm: "token_bucket"
+    # 令牌桶的大小
     bucket_size: 100
+    # 每秒補充的令牌數量
     refill_rate: 10
 
+# === 資料驗證規則 ===
 validation:
+  # --- 正規表示式 (Regex) ---
   regex:
+    # 用於匹配日期的格式
     date: "\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{4}"
+    # 用於匹配金額的格式
     amount: "\\d+([,.]\\d{1,2})?"
+    # 用於匹配貨幣符號
     currency: "[NT$€¥£฿]"
   
+  # --- 異常偵測 --- 
   anomaly_detection:
+    # 是否檢查項目加總與發票總金額是否匹配
     check_total_mismatch: true
+    # 總金額不匹配的容忍度 (例如 0.01 代表 1%)
     mismatch_tolerance: 0.01
+    # 是否檢查稅率
     check_tax_rate: true
+    # 預期的稅率 (例如 0.05 代表 5%)
     expected_tax_rate: 0.05
 
+# === 匯出功能設定 ===
 export:
+  # 支援匯出的檔案格式
   formats:
     - "csv"
     - "json"
     - "xml"
+  # 預設匯出格式
   default_format: "csv"
 
+# === 日誌 (Logging) 設定 ===
 logging:
+  # 日誌記錄層級 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   level: "INFO"
+  # 日誌檔案存放目錄
   log_dir: "data/logs"
+  # 單一檔案最大大小 (Bytes)
   max_file_size: 10485760
+  # 保留的舊日誌檔案數量
   backup_count: 5
 
+# === UI 介面設定 (此部分目前主要由 Flask 前端控制，可能為舊設定) ===
 ui:
   window:
     width: 1400
