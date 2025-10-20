@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Google Auth Test</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .result { border: 1px solid #ccc; padding: 1em; margin-top: 1em; background-color: #f9f9f9; }
+        .error { border-color: red; background-color: #ffebeb; }
+    </style>
+</head>
+<body>
+    <h1>Google OAuth 2.0 Test Page</h1>
+    
+    {% if auth_url %}
+        <p>Click the button below to begin the Google login process.</p>
+        <a href="{{ auth_url }}" style="padding: 10px 20px; background-color: #4285F4; color: white; text-decoration: none; border-radius: 5px;">
+            Login with Google
+        </a>
+    {% endif %}
+
+    {% if result %}
+        <h2>Test Result:</h2>
+        <div class="result">
+            <p><strong>Status:</strong> <span style="color: green;">Success</span></p>
+            <p><strong>User Info:</strong></p>
+            <pre>{{ result | tojson(indent=2) }}</pre>
+        </div>
+    {% endif %}
+
+    {% if error %}
+        <h2>Test Result:</h2>
+        <div class="result error">
+            <p><strong>Status:</strong> <span style="color: red;">Failed</span></p>
+            <p><strong>Error:</strong></p>
+            <pre>{{ error }}</pre>
+        </div>
+    {% endif %}
+
+</body>
+</html>

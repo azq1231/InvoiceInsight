@@ -29,6 +29,7 @@ MANIFEST
 venv/
 ENV/
 env/
+.venv/
 
 # IDE
 .vscode/
@@ -53,6 +54,8 @@ config/client_secrets.json
 config/credentials.json
 data/.token.json
 *.json.bak
+.env
+config/
 
 # OS
 .DS_Store
@@ -61,3 +64,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 temp/
+data/

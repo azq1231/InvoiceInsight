@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login</title>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f5f5f5; }
+        .login-container { text-align: center; background-color: white; padding: 3em; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .google-btn {
+            display: inline-block;
+            background-color: #4285F4;
+            color: white;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: background-color 0.3s, box-shadow 0.3s;
+            cursor: pointer;
+            border: none;
+        }
+        .google-btn:hover {
+            background-color: #357ae8;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Welcome to InvoiceInsight</h1>
+        <p>Please sign in to continue.</p>
+        <button id="login-button" class="google-btn">Sign in with Google</button>
+    </div>
+
+    <script>
+        const firebaseConfigJSON = '{{ config|tojson|safe }}';
+        const firebaseConfig = JSON.parse(firebaseConfigJSON);
+        
+        const app = firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        document.getElementById("login-button").addEventListener("click", function() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            // Add all necessary scopes for the application's features
+            provider.addScope('https://www.googleapis.com/auth/photoslibrary');
+            provider.addScope('https://www.googleapis.com/auth/cloud-vision');
+            provider.addScope('https://www.googleapis.com/auth/drive.readonly');
+            
+            auth.signInWithPopup(provider)
+                .then(function(authResult) {
+                    const credential = authResult.credential;
+                    const accessToken = credential.accessToken;
+                    const user = authResult.user;
+                    
+                    user.getIdToken().then(function(idToken) {
+                        fetch('/sessionLogin', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            // Send both tokens to the backend
+                            body: JSON.stringify({idToken: idToken, accessToken: accessToken})
+                        })
+                        .then(response => response.json())
+                        .then(function(data) {
+                            if (data.status === 'success' && data.redirectUrl) {
+                                window.location.href = data.redirectUrl;
+                            } else {
+                                alert("Login failed: " + (data.error || "Server responded with an error."));
+                            }
+                        }).catch(function(error) {
+                            console.error('Session login request failed:', error);
+                            alert('Failed to communicate with the server.');
+                        });
+                    });
+                })
+                .catch(function(error) {
+                    console.error("Google Sign-In Error:", error.message);
+                    alert(`Login failed: ${error.message}`);
+                });
+        });
+    </script>
+</body>
+</html>

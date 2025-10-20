@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>InvoiceInsight - OCR Uploader</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; line-height: 1.6; }
+        .container { max-width: 800px; margin: auto; }
+        #upload-form { margin-bottom: 2em; }
+        #image-preview img { max-width: 100%; height: auto; margin-top: 1em; border: 1px solid #ccc; }
+        #ocr-result { background-color: #f5f5f5; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; margin-top: 1em; }
+        #spinner { display: none; margin-top: 1em; }
+        .user-info { position: absolute; top: 10px; right: 20px; }
+        .flashes { list-style: none; padding: 0; margin-bottom: 1em; }
+        .flashes .success { background-color: #d4edda; color: #155724; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="user-info">
+            Welcome, {{ user.name }} | <a href="{{ url_for('logout') }}">Logout</a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <h1>Upload Invoice for OCR</h1>
+        <p>Select an image file of an invoice to extract its text.</p>
+
+        <form id="upload-form" enctype="multipart/form-data">
+            <input type="file" id="invoiceImage" name="invoiceImage" accept="image/*" required>
+            <button type="submit">Recognize Text</button>
+        </form>
+
+        <div id="spinner">Processing...</div>
+
+        <div id="image-preview"></div>
+        
+        <h3>OCR Result:</h3>
+        <div id="ocr-info" style="display: none; margin-bottom: 1em;">
+            <strong>OCR Engine:</strong> <span id="ocr-engine-name"></span>
+        </div>
+        <div id="export-section" style="display: none; margin-bottom: 1em;">
+            <a href="/export" target="_blank">下載 Excel 檔案</a>
+        </div>
+        <pre id="ocr-result"></pre>
+    </div>
+
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const form = event.target;
+            const formData = new FormData(form);
+            const imageFile = formData.get('invoiceImage');
+
+            const spinner = document.getElementById('spinner');
+            const imagePreview = document.getElementById('image-preview');
+            const ocrResult = document.getElementById('ocr-result');
+            const exportSection = document.getElementById('export-section');
+            const ocrInfo = document.getElementById('ocr-info');
+            const ocrEngineName = document.getElementById('ocr-engine-name');
+
+            // Clear previous results and show spinner
+            spinner.style.display = 'block';
+            exportSection.style.display = 'none'; // Hide link on new upload
+            ocrInfo.style.display = 'none'; // Hide engine info on new upload
+            imagePreview.innerHTML = '';
+            ocrResult.textContent = '';
+
+            // Display image preview
+            if (imageFile) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    imagePreview.appendChild(img);
+                }
+                reader.readAsDataURL(imageFile);
+            }
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error || 'Server error'); });
+                }
+                return response.json();
+            })
+            .then(data => {
+                spinner.style.display = 'none';
+                if (data.error) {
+                    ocrResult.textContent = `Error: ${data.error}`;
+                    exportSection.style.display = 'none';
+                    ocrInfo.style.display = 'none';
+                } else {
+                    // Pretty-print the JSON response
+                    ocrResult.textContent = JSON.stringify(data, null, 2);
+                    
+                    // Show the export link on success
+                    if (data.status === 'success') {
+                        exportSection.style.display = 'block';
+                    }
+
+                    // Display OCR engine info
+                    if (data.ocr_result && data.ocr_result.engine) {
+                        ocrEngineName.textContent = data.ocr_result.engine;
+                        ocrInfo.style.display = 'block';
+                    } else {
+                        ocrInfo.style.display = 'none';
+                    }
+                }
+            })
+            .catch(error => {
+                spinner.style.display = 'none';
+                ocrResult.textContent = `An error occurred: ${error.message}`;
+                exportSection.style.display = 'none';
+                ocrInfo.style.display = 'none';
+                console.error('Upload failed:', error);
+            });
+        });
+    </script>
+</body>
+</html>

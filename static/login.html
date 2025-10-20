@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Firebase Login</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+</head>
+<body>
+    <button id="login-button">Sign in with Google</button>
+    <script>
+        const firebaseConfig = JSON.parse(decodeURIComponent(new URLSearchParams(window.location.search).get('firebaseConfig')));
+        firebase.initializeApp(firebaseConfig);
+
+        document.getElementById("login-button").addEventListener("click", function() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            firebase.auth().signInWithPopup(provider).then(function(authResult) {
+                authResult.user.getIdToken().then(function(idToken) {
+                    const accessToken = authResult.credential.accessToken;
+                    window.parent.location.href = '/?id_token=' + idToken + '&access_token=' + accessToken;
+                });
+            }).catch(function(error) {
+                console.error("Login failed:", error);
+            });
+        });
+    </script>
+</body>
+</html>
