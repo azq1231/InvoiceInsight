@@ -14,88 +14,87 @@ def is_custom_ledger(ocr_text: str) -> bool:
     return found_count >= 3
 
 def parse(ocr_text: str) -> dict:
-    """Parse the custom ledger format from OCR text."""
-    logger.info("Using custom ledger parser.")
+    """Parse the custom ledger format from OCR text, including validation."""
+    logger.info("Using custom ledger parser with validation.")
+
+    # --- Pre-processing Step ---
+    processed_text = re.sub(r'([\u4e00-\u9fa5])\.(?=\d)', r'\1 ', ocr_text)
     
-    # --- Hardcoded data based on user feedback for discounts ---
-    # In a real application, this might come from a config or a more advanced parser
-    discounts = {
-        '文正': 10,
-        '佳美': 10,
-        '惠瑛': 10,
-        '姿璇': 20,
-    }
+    # --- Hardcoded data ---
+    discounts_map = {'文正': 10, '佳美': 10, '惠瑛': 10, '姿璇': 20}
 
     # --- Parsing Logic ---
-    # This is a simplified parser based on the single example. It could be made more robust.
-    lines = ocr_text.split('\n')
-    income_items = []
-    expense_items = []
-    
-    # Regex to find name and amount, and optional 'x' discount part
-    # This is a basic regex and might need refinement for more varied inputs
-    item_pattern = re.compile(r'([\u4e00-\u9fa5]+)\s*([0-9.]+)(?:x([0-9]+))?' )
+    income_items, expense_items = [], []
+    declared_total, declared_discount_total = None, None
 
-    # Find all potential items in the full text
-    # This is more robust than splitting by line
-    potential_items_text = ocr_text.replace('\n', ' ')
+    # 1. Extract declared totals first
+    declared_total_pattern = re.compile(r'加\s*(\d+)\s*X(\d+)')
+    declared_match = declared_total_pattern.search(processed_text)
+    if declared_match:
+        declared_total = float(declared_match.group(1))
+        declared_discount_total = float(declared_match.group(2))
+        # Remove the matched string to prevent it from being parsed as an item
+        processed_text = processed_text.replace(declared_match.group(0), '')
+
+    # 2. Extract line items
+    item_pattern = re.compile(r'([\u4e00-\u9fa5]+)\s*([0-9.]+)(?:x([0-9]+))?')
+    potential_items_text = processed_text.replace('\n', ' ')
     matches = item_pattern.findall(potential_items_text)
 
     parsed_names = set()
     for name, amount_str, _ in matches:
-        # Skip if we've already processed this person/item
-        if name in parsed_names:
-            continue
-
-        amount = float(amount_str)
-        discount = discounts.get(name, 0)
+        if name in parsed_names: continue
         
-        # Special handling for '醬油' as an expense
+        amount = float(amount_str)
+        discount = discounts_map.get(name, 0)
+        
         if '醬油' in name:
             expense_items.append({'item': name, 'cost': amount})
         else:
-            income_items.append({
-                'name': name,
-                'amount': amount,
-                'discount': discount
-            })
+            income_items.append({'name': name, 'amount': amount, 'discount': discount})
         parsed_names.add(name)
 
-    # Handle items with no numbers, like '親匯' and '清旦'
     for special_item in ['親匯', '清旦']:
-        if special_item in ocr_text and special_item not in parsed_names:
-            income_items.append({
-                'name': special_item,
-                'amount': 0,
-                'discount': 0,
-                'note': '單獨註記'
-            })
+        if special_item in processed_text and special_item not in parsed_names:
+            income_items.append({'name': special_item, 'amount': 0, 'discount': 0, 'note': '單獨註記'})
 
-    # --- Calculations ---
-    total_income_base = sum(item['amount'] for item in income_items)
-    total_discount = sum(item['discount'] for item in income_items)
-    
+    # --- Calculations & Validation ---
+    calculated_total_income = sum(item['amount'] for item in income_items)
+    calculated_total_discount = sum(item['discount'] for item in income_items)
     expense_cost = sum(item['cost'] for item in expense_items)
     
-    # Custom balance calculation from user
-    # floor((1550 * 0.1) / 10) * 10
+    anomalies = []
+    # Compare calculated vs declared totals
+    if declared_total is not None and declared_total != calculated_total_income:
+        anomalies.append(f"總額不符：計算總額 ({calculated_total_income}) 與宣告總額 ({declared_total}) 不一致！")
+    
+    if declared_discount_total is not None and declared_discount_total != calculated_total_discount:
+        anomalies.append(f"折扣總額不符：計算總折扣 ({calculated_total_discount}) 與宣告總折扣 ({declared_discount_total}) 不一致！")
+
+    # Final balance calculation
     calculated_expense = math.floor((expense_cost * 0.1) / 10) * 10
-    final_balance = total_income_base - calculated_expense
+    final_balance = calculated_total_income - calculated_expense
 
     # --- Structuring Output ---
-    # This structure should be compatible with what the validator expects
     extracted_data = {
-        'date': '114年10月15日 (星期三)', # Hardcoded as per user
-        'items': income_items + expense_items, # Combine for a full list
-        'calculated_total': total_income_base, # The main sum
-        'declared_total': total_income_base, # No declared total in this format
+        'date': '114年10月15日 (星期三)', 
+        'items': income_items + expense_items,
+        'calculated_total': calculated_total_income,
+        'declared_total': declared_total or calculated_total_income, # Use calculated if not declared
         'raw_text': ocr_text,
+        'anomalies': anomalies, # List of validation errors
+        'has_anomalies': len(anomalies) > 0,
         'custom_fields': {
-            'total_discount': total_discount,
+            'calculated_total_discount': calculated_total_discount,
+            'declared_discount_total': declared_discount_total,
             'final_balance': final_balance,
-            'balance_calculation_details': f"{total_income_base} - {calculated_expense} = {final_balance}"
+            'balance_calculation_details': f"{calculated_total_income} - {calculated_expense} = {final_balance}",
+            'validations': {
+                'total_match': declared_total == calculated_total_income if declared_total is not None else True,
+                'discount_match': declared_discount_total == calculated_total_discount if declared_discount_total is not None else True
+            }
         }
     }
     
-    logger.info(f"Custom parser extracted {len(income_items)} income items and {len(expense_items)} expense items.")
+    logger.info(f"Custom parser finished. Found {len(anomalies)} anomalies.")
     return extracted_data

@@ -4,14 +4,25 @@
     <title>InvoiceInsight - OCR Uploader</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 2em; line-height: 1.6; }
-        .container { max-width: 800px; margin: auto; }
+        .container { max-width: 1200px; margin: auto; } /* Increased width for side-by-side */
         #upload-form { margin-bottom: 2em; }
-        #image-preview img { max-width: 100%; height: auto; margin-top: 1em; border: 1px solid #ccc; }
-        #ocr-result { background-color: #f5f5f5; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; margin-top: 1em; }
-        #spinner { display: none; margin-top: 1em; }
         .user-info { position: absolute; top: 10px; right: 20px; }
         .flashes { list-style: none; padding: 0; margin-bottom: 1em; }
         .flashes .success { background-color: #d4edda; color: #155724; padding: 10px; border-radius: 4px; }
+        #spinner { display: none; margin-top: 1em; }
+
+        /* New layout styles */
+        .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2em; margin-top: 1em; }
+        .image-panel img { max-width: 100%; height: auto; border: 1px solid #ccc; }
+        
+        /* Results display styles */
+        .results-summary { background-color: #f5f5f5; padding: 1em; border-radius: 4px; }
+        .results-summary ul { list-style: none; padding: 0; }
+        .results-table { border-collapse: collapse; width: 100%; margin-top: 1em; }
+        .results-table th, .results-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .results-table th { background-color: #e9e9e9; }
+        .results-anomalies { background-color: #f8d7da; color: #721c24; padding: 1em; border-radius: 4px; margin-bottom: 1em; }
+        .results-anomalies ul { padding-left: 20px; margin: 0; }
     </style>
 </head>
 <body>
@@ -40,19 +51,122 @@
 
         <div id="spinner">Processing...</div>
 
-        <div id="image-preview"></div>
-        
-        <h3>OCR Result:</h3>
-        <div id="ocr-info" style="display: none; margin-bottom: 1em;">
-            <strong>OCR Engine:</strong> <span id="ocr-engine-name"></span>
+        <!-- New Grid Layout -->
+        <div class="results-grid">
+            <!-- Left Panel: Image -->
+            <div class="image-panel" id="image-preview"></div>
+            
+            <!-- Right Panel: Results -->
+            <div class="results-panel">
+                <h3>OCR Result:</h3>
+                <div id="export-section" style="display: none; margin-bottom: 1em;">
+                    <a href="/export" target="_blank">下載 Excel 檔案</a>
+                </div>
+                <div id="results-container"></div>
+            </div>
         </div>
-        <div id="export-section" style="display: none; margin-bottom: 1em;">
-            <a href="/export" target="_blank">下載 Excel 檔案</a>
-        </div>
-        <pre id="ocr-result"></pre>
     </div>
 
     <script>
+        function renderResults(data) {
+            const container = document.getElementById('results-container');
+            container.innerHTML = ''; // Clear previous results
+
+            const extracted = data.extracted_data || {};
+            const custom = extracted.custom_fields || {};
+
+            // --- Summary ---
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'results-summary';
+            
+            const summaryTitle = document.createElement('h4');
+            summaryTitle.textContent = '分析結果摘要';
+            summaryDiv.appendChild(summaryTitle);
+
+            const summaryList = document.createElement('ul');
+
+            const addSummaryItem = (label, value) => {
+                if (value !== undefined && value !== null && value !== '') {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<strong>${label}:</strong> ${value}`;
+                    summaryList.appendChild(li);
+                }
+            };
+
+            addSummaryItem('OCR 引擎', data.ocr_result ? data.ocr_result.engine : 'N/A');
+            addSummaryItem('最終結餘', custom.final_balance);
+            addSummaryItem('計算總收入', extracted.calculated_total);
+            addSummaryItem('宣告總收入', extracted.declared_total);
+            addSummaryItem('計算總折扣', custom.calculated_total_discount);
+            addSummaryItem('宣告總折扣', custom.declared_discount_total);
+            
+            summaryDiv.appendChild(summaryList);
+            
+            // --- Anomalies ---
+            const anomalies = extracted.anomalies || [];
+            if (anomalies.length > 0) {
+                const anomalyDiv = document.createElement('div');
+                anomalyDiv.className = 'results-anomalies';
+                
+                const anomalyTitle = document.createElement('h4');
+                anomalyTitle.textContent = '🔍 待复核项目';
+                anomalyDiv.appendChild(anomalyTitle);
+
+                const anomalyList = document.createElement('ul');
+                anomalies.forEach(text => {
+                    const li = document.createElement('li');
+                    li.textContent = text;
+                    anomalyList.appendChild(li);
+                });
+                anomalyDiv.appendChild(anomalyList);
+                
+                container.appendChild(anomalyDiv);
+            }
+
+            container.appendChild(summaryDiv); // Add summary after anomalies
+
+            // --- Items Table ---
+            const items = extracted.items || [];
+            if (items.length > 0) {
+                const tableTitle = document.createElement('h4');
+                tableTitle.textContent = '項目清單';
+                tableTitle.style.marginTop = '1.5em';
+                container.appendChild(tableTitle);
+
+                const table = document.createElement('table');
+                table.className = 'results-table';
+                
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                const headers = ['項目', '金額', '折扣', '備註'];
+                headers.forEach(text => {
+                    const th = document.createElement('th');
+                    th.textContent = text;
+                    headerRow.appendChild(th);
+                });
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+
+                const tbody = document.createElement('tbody');
+                items.forEach(item => {
+                    const tr = document.createElement('tr');
+                    const name = item.name || item.item || 'N/A';
+                    const amount = item.amount !== undefined ? item.amount : (item.cost !== undefined ? item.cost : 'N/A');
+                    const discount = item.discount !== undefined ? item.discount : '-';
+                    const note = item.note || '-';
+                    
+                    [name, amount, discount, note].forEach(text => {
+                        const td = document.createElement('td');
+                        td.textContent = text;
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                container.appendChild(table);
+            }
+        }
+
         document.getElementById('upload-form').addEventListener('submit', function(event) {
             event.preventDefault();
 
@@ -62,17 +176,14 @@
 
             const spinner = document.getElementById('spinner');
             const imagePreview = document.getElementById('image-preview');
-            const ocrResult = document.getElementById('ocr-result');
+            const resultsContainer = document.getElementById('results-container');
             const exportSection = document.getElementById('export-section');
-            const ocrInfo = document.getElementById('ocr-info');
-            const ocrEngineName = document.getElementById('ocr-engine-name');
 
             // Clear previous results and show spinner
             spinner.style.display = 'block';
-            exportSection.style.display = 'none'; // Hide link on new upload
-            ocrInfo.style.display = 'none'; // Hide engine info on new upload
+            exportSection.style.display = 'none';
             imagePreview.innerHTML = '';
-            ocrResult.textContent = '';
+            resultsContainer.innerHTML = '';
 
             // Display image preview
             if (imageFile) {
@@ -98,32 +209,19 @@
             .then(data => {
                 spinner.style.display = 'none';
                 if (data.error) {
-                    ocrResult.textContent = `Error: ${data.error}`;
+                    resultsContainer.innerHTML = `<p style="color: red;"><strong>錯誤:</strong> ${data.error}</p>`;
                     exportSection.style.display = 'none';
-                    ocrInfo.style.display = 'none';
                 } else {
-                    // Pretty-print the JSON response
-                    ocrResult.textContent = JSON.stringify(data, null, 2);
-                    
-                    // Show the export link on success
+                    renderResults(data);
                     if (data.status === 'success') {
                         exportSection.style.display = 'block';
-                    }
-
-                    // Display OCR engine info
-                    if (data.ocr_result && data.ocr_result.engine) {
-                        ocrEngineName.textContent = data.ocr_result.engine;
-                        ocrInfo.style.display = 'block';
-                    } else {
-                        ocrInfo.style.display = 'none';
                     }
                 }
             })
             .catch(error => {
                 spinner.style.display = 'none';
-                ocrResult.textContent = `An error occurred: ${error.message}`;
+                resultsContainer.innerHTML = `<p style="color: red;"><strong>發生預期外的錯誤:</strong> ${error.message}</p>`;
                 exportSection.style.display = 'none';
-                ocrInfo.style.display = 'none';
                 console.error('Upload failed:', error);
             });
         });

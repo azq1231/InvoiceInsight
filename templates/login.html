@@ -51,16 +51,14 @@
             auth.signInWithPopup(provider)
                 .then(function(authResult) {
                     const credential = authResult.credential;
-                    const accessToken = credential.accessToken;
+                    const accessToken = credential.accessToken; // 取得 accessToken
                     const user = authResult.user;
                     
                     user.getIdToken().then(function(idToken) {
                         fetch('/sessionLogin', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            // Send both tokens to the backend
+                            headers: { 'Content-Type': 'application/json' },
+                            // 同時發送 idToken 和 accessToken 到後端
                             body: JSON.stringify({idToken: idToken, accessToken: accessToken})
                         })
                         .then(response => response.json())

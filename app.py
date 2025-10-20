@@ -2,18 +2,13 @@ import os
 # This MUST be set before Flask and other imports that might use it.
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-from flask import Flask, render_template, request, session, redirect, url_for, jsonify, send_file, flash
+from flask import Flask, render_template, request, session, redirect, url_for, jsonify, send_file, flash # Keep flash for now
 from src.auth.firebase_auth import FirebaseAuthManager
 from src.processing.ocr_orchestrator import OCROrchestrator # Import the orchestrator
 from src.utils.config import get_config
 import logging
 from src.export.excel_exporter import export_to_excel
-
-# --- New Imports for Google OAuth Test ---
-from src.auth.google_auth import GoogleAuthManager
 from google.oauth2.credentials import Credentials
-import requests as grequests # Alias to avoid conflict with flask.request
-# --- End New Imports ---
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
@@ -33,37 +28,35 @@ def login():
 def session_login():
     data = request.get_json()
     id_token = data.get('idToken')
-    access_token = data.get('accessToken')
+    access_token = data.get('accessToken') # Re-add accessToken handling
 
     if not id_token:
         return jsonify({'status': 'error', 'error': 'Missing idToken'}), 400
 
     user_info = auth_manager.verify_id_token(id_token)
     if not user_info:
-        return jsonify({'status': 'error', 'error': 'Invalid idToken'}), 401
+        return jsonify({'status': 'error', 'error': 'Invalid Firebase idToken'}), 401
     
     session['user'] = user_info
     flash('您已成功登入！', 'success')
     
-    # Create a credentials object from the access token and store it for the orchestrator
+    # Restore the original logic to create temporary credentials from the access token
     if access_token:
         try:
             creds = Credentials(token=access_token)
-            # The OCROrchestrator expects a dictionary, so we build one.
-            # Note: This credential will not be refreshable as we don't get a refresh token from this flow.
+            # Store the credentials as a dictionary in the session.
+            # This credential will NOT be refreshable. It will expire.
             session['google_credentials'] = {
                 'token': creds.token,
-                'refresh_token': creds.refresh_token, # will be None
-                'token_uri': creds.token_uri, # will be None
-                'client_id': creds.client_id, # will be None
-                'client_secret': creds.client_secret, # will be None
-                'scopes': creds.scopes # will be None
+                'refresh_token': None,
+                'token_uri': creds.token_uri,
+                'client_id': creds.client_id,
+                'client_secret': creds.client_secret,
+                'scopes': creds.scopes
             }
-            logging.info("Successfully stored Google API credentials in session.")
+            logging.info("Successfully stored temporary Google API credentials in session.")
         except Exception as e:
             logging.error(f"Failed to create credentials from access token: {e}")
-            # Proceed with login, but API calls might fail later.
-            pass
 
     return jsonify({'status': 'success', 'redirectUrl': url_for('index')})
 
@@ -80,6 +73,10 @@ def upload_file():
     if 'user' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
 
+    # Check for credentials, but don't redirect to the new login flow
+    if 'google_credentials' not in session:
+        return jsonify({'error': 'Google credentials not found in session. Please log out and log back in.'}), 401
+
     if 'invoiceImage' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     
@@ -91,8 +88,13 @@ def upload_file():
     if file:
         try:
             # Initialize the orchestrator here, passing in session credentials
-            google_creds = session.get('google_credentials')
-            ocr_orchestrator = OCROrchestrator(google_credentials=google_creds)
+            creds_dict = session.get('google_credentials')
+            if not creds_dict:
+                 return jsonify({'error': 'Google credentials not found in session.'}), 401
+            
+            # The OCROrchestrator expects the credentials DICTIONARY, not the object.
+            # It will build the credentials object internally.
+            ocr_orchestrator = OCROrchestrator(google_credentials=creds_dict)
 
             image_bytes = file.read()
             logging.info(f"Received file: {file.filename}, size: {len(image_bytes)} bytes")
@@ -140,8 +142,6 @@ def export_file():
     except Exception as e:
         logging.error(f"Excel export failed: {e}", exc_info=True)
         return jsonify({'error': f'Failed to export file: {e}'}), 500
-
-# --- End New Routes ---
 
 
 if __name__ == '__main__':

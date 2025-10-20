@@ -12,6 +12,7 @@ from src.processing.validator import DataValidator
 from src.utils.config import get_config
 # Import the new custom parser and its detector function
 from src.processing.custom_ledger_parser import is_custom_ledger, parse as parse_custom_ledger
+from src.processing.custom_ledger_parser_v2 import is_custom_ledger_v2, parse_v2 as parse_custom_ledger_v2
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +87,13 @@ class OCROrchestrator:
         try:
             full_text = self.extractor.normalize_full_width(ocr_result.get('full_text', ''))
 
-            # Check if the text matches the custom ledger format
+            # Check for different custom formats in a prioritized order
             if is_custom_ledger(full_text):
-                # Use the custom parser for this specific format
+                # Use the custom parser for format #1
                 extracted_data = parse_custom_ledger(full_text)
+            elif is_custom_ledger_v2(full_text):
+                # Use the custom parser for format #2
+                extracted_data = parse_custom_ledger_v2(full_text)
             else:
                 # Use the default extractor for all other formats
                 extracted_data = self.extractor.extract_from_text(full_text, ocr_result.get('blocks'))
