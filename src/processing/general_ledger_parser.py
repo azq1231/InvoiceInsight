@@ -13,11 +13,14 @@ SPECIAL_EXPENSE_KEYWORDS = ['冷氣外機', '冷氣外机', '順茂', '顺茂']
 # --- Shared Regex Patterns ---
 DATE_PATTERN_1 = re.compile(r'(\d{2,3})年(\d{1,2})月(\d{1,2})日')
 DATE_PATTERN_2 = re.compile(r'(\d{2,3})\s+(\d{1,2})/(\d{1,2})')
-# This pattern handles two cases:
-# 1. Name and amount are separated by a space (e.g., "#64 50x50"). The name can be anything.
-# 2. Name and amount are NOT separated by a space (e.g., "昌雄250x30"). The name must be non-digits.
-# The groups are structured to be consistent: group 1 is always the name, group 2 the amount, group 3 the discount.
-ITEM_PATTERN_GENERAL = re.compile(r'^(?:(.+?)\s+|([\u4e00-\u9fa5a-zA-Z#]+))\s*([0-9,.]+)(?:\s*[xX×]\s*(\d+))?')
+# Pattern for items where name and amount are NOT separated by a space (e.g., "昌雄250")
+ITEM_PATTERN_NO_SPACE = re.compile(r'^([\u4e00-\u9fa5a-zA-Z#]+)([0-9,.]+)(.*)$')
+# Pattern for items where name and amount ARE separated by a space (e.g., "#64 50")
+# This is the general pattern that also handles discounts.
+ITEM_PATTERN_WITH_SPACE = re.compile(r'^(.+?)\s*[:：\s]\s*([0-9,.]+)(.*)$')
+# New pattern to specifically handle cases like "AA 4.330" -> name: "AA 4", amount: "330"
+# It greedily captures the last number block as the amount.
+ITEM_PATTERN_NAME_WITH_NUM = re.compile(r'^(.+?)\s+([0-9,.]+)$')
 
 def is_general_ledger(ocr_text: str) -> bool:
     """
@@ -47,6 +50,10 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
     else:
         logger.info("Using default expense keywords for parsing.")
 
+    # --- Pre-process text to fix common OCR errors ---
+    # Replace dots between a non-digit and a digit with a space (e.g., "弘瑜.200" -> "弘瑜 200")
+    ocr_text = re.sub(r'([\u4e00-\u9fa5a-zA-Z])\.(?=\d)', r'\1 ', ocr_text)
+
     anomalies = []
     lines = ocr_text.strip().split('\n')
     declared_total = None
@@ -55,29 +62,19 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
     declared_special_discount_total = None
     declared_balance = None
     extracted_date = None
-    processed_lines = []
+    unmatched_lines = [] # Initialize here
 
-    # --- Pre-scan for standalone numbers to correctly assign total and balance ---
-    standalone_numbers = [line for line in lines if line.strip().isdigit()]
-    if len(standalone_numbers) >= 1:
-        # The first standalone number is the declared total income
-        declared_total = float(standalone_numbers[0])
-        logger.info(f"Found declared total income: {declared_total}")
-    if len(standalone_numbers) >= 2:
-        # The last standalone number is the declared balance
-        declared_balance = float(standalone_numbers[-1])
-        logger.info(f"Found declared balance: {declared_balance}")
-    
-    for line in lines:
-        line = line.strip()
-        
+    # --- First pass: Extract dates, special totals, discounts, and collect unmatched lines ---
+    for line in lines: # Re-introducing the loop
+        line = line.strip() # Strip whitespace for each line
+
         # Try matching both date patterns
         date_match_1 = DATE_PATTERN_1.search(line)
         date_match_2 = DATE_PATTERN_2.search(line)
         date_match = date_match_1 or date_match_2
 
         if date_match:
-            if extracted_date is None: # Take the first valid date found
+            if extracted_date is None: # Only take the first valid date found
                 try:
                     roc_year = int(date_match.group(1))
                     month = int(date_match.group(2))
@@ -98,36 +95,113 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
             declared_special_discount_total = float(declared_match.group(2))
             continue
 
-        # Find declared total (a line with only numbers)
-        if line.isdigit():
-            # This is now handled by the pre-scan, so we just skip it here.
-            continue
-        
         # Find declared discount (a line starting with x)
-        if line.startswith('x') and line[1:].isdigit():
+        discount_match = re.match(r'^[xX]\s*(\d+\.?\d*)$', line)
+        if discount_match:
             if declared_discount is None: # Take the first one
-                declared_discount = float(line[1:])
-            continue # Don't add this line
+                declared_discount = float(discount_match.group(1))
+            continue # Don't process this line as an item
         
         if line: # Avoid adding empty lines
-            processed_lines.append(line)
+            unmatched_lines.append(line)
 
     # --- Parse Items ---
     income_items = []
     expense_items = []
+    unmatched_lines_after_parsing = []
 
-    for line in processed_lines:
-        match = ITEM_PATTERN_GENERAL.match(line)
+    # --- Pre-filter processed_lines to remove likely OCR noise from horizontal lines ---
+    final_lines_to_process = []
+    noise_pattern = re.compile(
+        r"^[a-zA-Z]{1,4}\s+\d+$"  # Matches short words like "gma 201"
+    )
+    for line in unmatched_lines: # First, filter out all the noise
+        # Heuristic 1: Very short lines with non-alphanumeric/non-CJK symbols are likely noise.
+        # e.g., "男】", "】"
+        if len(line) <= 3 and re.search(r'[^\u4e00-\u9fa5a-zA-Z0-9\s,.#]', line):
+            logger.debug(f"Skipping likely noise line (short, with symbols): '{line}'")
+            continue
+        # Heuristic 2: Short English-like word followed by a number.
+        if noise_pattern.match(line) and not any(kw in line for kw in keywords_to_use):
+            logger.debug(f"Skipping likely noise line (short word + number): '{line}'")
+            continue
+        # Heuristic 3: Line contains only CJK characters and is likely noise from a separator line
+        if len(line) > 3 and re.fullmatch(r'[\u4e00-\u9fa5]+', line):
+            logger.debug(f"Skipping likely noise line (all CJK, potential separator): '{line}'")
+            continue
+        final_lines_to_process.append(line) # Add clean lines to the list for parsing
+
+    # --- Stateful Parsing Logic ---
+    # This logic can associate a name on one line with an amount on a subsequent line.
+    last_seen_name = None
+    
+    # Now, iterate through the CLEANED list of lines
+    for i, line in enumerate(final_lines_to_process):
+        # Check if the previous clean line was a name for the current numeric line
+        if i > 0 and re.fullmatch(r'[0-9,.]+', line) and not re.search(r'\d', final_lines_to_process[i-1]):
+            last_seen_name = final_lines_to_process[i-1].strip().rstrip('.')
+        else:
+            last_seen_name = None
+
+        # If the current line is just a number, it might belong to the previously seen name.
+        if re.fullmatch(r'[0-9,.]+', line) and last_seen_name:
+            # We found a number that likely corresponds to the name on the previous line.
+            # Combine them into a single logical line for the parser.
+            line = f"{last_seen_name} {line}"
+            logger.debug(f"Combined cross-line item: '{line}'")
+            last_seen_name = None # Reset after combining
+
+        # Strategy: Match from most specific to most general pattern for better accuracy.
+        # 1. Try the new pattern for names containing numbers first.
+        # 2. Fallback to the general pattern with space/colon separators (handles discounts).
+        # 3. Finally, try the pattern for items with no space.
+        match_name_with_num = ITEM_PATTERN_NAME_WITH_NUM.match(line)
+        match_with_space = ITEM_PATTERN_WITH_SPACE.match(line)
+        match_no_space = ITEM_PATTERN_NO_SPACE.match(line)
+
+        match = match_name_with_num or match_with_space or match_no_space
+
         if match:
-            # Group 1 is for names with spaces, Group 2 for names without. One will be None.
-            name = (match.group(1) or match.group(2) or '').strip()
-            amount_str = match.group(3)
-            discount_str = match.group(4)
+            name = match.group(1).strip()
+            amount_part = match.group(2)
+            remaining_line = match.group(3).strip() if len(match.groups()) > 2 else ""
+
+            # Rule: The name part cannot be empty or just spaces.
+            if not name:
+                unmatched_lines_after_parsing.append(line); continue
+
+            # Now, parse the discount from the remaining part of the line
+            discount = 0
+            # The discount might be in the second or third group depending on the regex that matched.
+            # Let's check both `amount_part` and `remaining_line`.
+            discount_search_str = amount_part + " " + remaining_line
+            discount_match = re.search(r'[xX×]\s*(\d+)', discount_search_str)
+            if discount_match:
+                discount = int(discount_match.group(1))
+                # The actual amount is the part before the 'x'
+                amount_str = amount_part.split(discount_match.group(0)[0])[0].strip()
+            else:
+                amount_str = amount_part
+
+            # --- Post-regex Correction for specific OCR errors ---
+            # Heuristic for "AA 4.330" -> name: "AA 4", amount: "330"
+            # This pattern is a common OCR error where a space is read as a dot.
+            correction_match = re.match(r'^(\d{1,2})\.(\d{2,})$', amount_str)
+            if correction_match:
+                logger.debug(f"Applying correction for potential space-as-dot OCR error on '{line}'")
+                name = f"{name} {correction_match.group(1)}".strip()
+                amount_str = correction_match.group(2)
 
             try:
                 if not name: continue # Skip if name is empty
-                amount = float(amount_str.replace(',', ''))
-                discount = int(discount_str) if discount_str else 0
+                # Clean the amount string: remove commas, then ensure only one dot remains for float conversion.
+                # This handles cases like "800.." or "1,000."
+                temp_amount_str = amount_str.replace(',', '')
+                numbers_found = re.findall(r'[0-9]+\.?[0-9]*', temp_amount_str) # Find all numbers
+                if not numbers_found:
+                    raise ValueError("No valid number found in amount string")
+                cleaned_amount_str = numbers_found[0] # Take the first valid number found
+                amount = float(cleaned_amount_str)
             except ValueError:
                 anomalies.append(f"無法解析金額或折扣: '{line}'")
                 continue
@@ -137,6 +211,13 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
                 anomalies.append(f"項目名稱不應為純數字: '{line}'")
                 continue # Skip this invalid item
             
+            # Heuristic: Flag names that are short, all-caps, and non-standard as they are likely OCR errors.
+            # e.g., "AA" from "AA 4.330" which should have been "明中 330"
+            if len(name) <= 3 and name.isupper() and name.isalpha():
+                review_reason = f"項目名稱可能為 OCR 辨識錯誤: '{name}'"
+                anomalies.append(f"{review_reason} (來自行: '{line}')")
+                # We can still add the item but flag it for review.
+
             item_data = {
                 'name': name,
                 'amount': amount,
@@ -154,10 +235,28 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
                 item_data['category'] = '收入'
                 income_items.append(item_data)
         else:
-            # If a line in processed_lines doesn't match the item pattern, flag it.
-            anomalies.append(f"無法解析的項目: '{line}'")
+            # If the line was just a name that we successfully combined with a number on the next line,
+            # we don't need to do anything with it here.
+            is_just_a_name_for_next_line = (
+                not re.search(r'\d', line) and 
+                i + 1 < len(final_lines_to_process) and 
+                re.fullmatch(r'[0-9,.]+', final_lines_to_process[i+1])
+            )
+            if not is_just_a_name_for_next_line:
+                unmatched_lines_after_parsing.append(line)
 
     # --- Calculations & Validation ---
+    # Now, process the remaining unmatched lines to find total and balance
+    standalone_numbers = [line for line in unmatched_lines_after_parsing if line.strip().isdigit()]
+    if len(standalone_numbers) >= 1:
+        # The largest standalone number is most likely the declared total income
+        declared_total = float(max(standalone_numbers, key=float))
+        logger.info(f"Found declared total income from unmatched numbers: {declared_total}")
+    if len(standalone_numbers) >= 2:
+        # The last standalone number is the declared balance
+        declared_balance = float(standalone_numbers[-1])
+        logger.info(f"Found declared balance from unmatched numbers: {declared_balance}")
+
     all_items = income_items + expense_items
     calculated_total_income = sum(item['amount'] for item in income_items)
     calculated_total_discount = sum(item['discount'] for item in all_items)
@@ -165,7 +264,7 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
     # --- Special Balance Calculation ---
     # Apply the formula to each expense item individually, then sum them up.
     calculated_expense = sum(
-        math.floor((item['amount'] * 0.1) / 10) * 10 for item in expense_items
+        round((item['amount'] * 0.1) / 10) * 10 for item in expense_items
     )
     final_balance = calculated_total_income - calculated_expense
 

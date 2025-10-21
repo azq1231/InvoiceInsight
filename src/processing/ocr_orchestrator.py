@@ -1,7 +1,7 @@
 """Main OCR orchestrator coordinating all processing steps"""
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 # Import both OCR engines
 from src.ocr.vision_ocr import VisionOCR
@@ -51,10 +51,15 @@ class OCROrchestrator:
         self.extractor = DataExtractor()
         self.validator = DataValidator()
     
-    def process_image(self, image_bytes: bytes, photo_id: str = None) -> Dict:
+    def process_image(self, image_bytes: bytes, photo_id: str = None, expense_keywords: Optional[List[str]] = None) -> Dict:
         """
         Process an image through the OCR pipeline.
         It will try Google Vision first if available, otherwise it falls back to Tesseract.
+
+        Args:
+            image_bytes (bytes): The image file bytes.
+            photo_id (str, optional): An identifier for the photo. Defaults to None.
+            expense_keywords (Optional[List[str]], optional): A list of custom expense keywords. Defaults to None.
         """
         ocr_result = None
         logger.info(f"Starting OCR processing for photo: {photo_id or 'unknown'}")
@@ -82,25 +87,12 @@ class OCROrchestrator:
         if not ocr_result:
             return self._create_failure_response(photo_id, "No OCR engines were available or all failed.")
 
-        return self.reprocess_text(ocr_result.get('full_text', ''), ocr_result, photo_id)
-
-    def reprocess_text(self, raw_text: str, ocr_result_context: Dict, photo_id: str = "reparsed", expense_keywords: Optional[list] = None) -> Dict:
-        """
-        Reprocesses existing text, skipping the OCR step.
-        This is useful for debugging parsers.
-
-        Args:
-            raw_text (str): The raw text from OCR.
-            ocr_result_context (Dict): The original OCR result for context (blocks, confidence).
-            photo_id (str): The ID of the photo.
-            expense_keywords (Optional[list]): A list of custom keywords to define expenses.
-        """
         # --- Post-OCR Processing ---
         try:
-            full_text = self.extractor.normalize_full_width(raw_text)
+            full_text = self.extractor.normalize_full_width(ocr_result.get('full_text', ''))
             
             # 步驟 1: 總是先執行通用提取器，以獲取包含日期在內的基礎資料。
-            final_extracted_data = self.extractor.extract_from_text(full_text, ocr_result_context.get('blocks'))
+            final_extracted_data = self.extractor.extract_from_text(full_text, ocr_result.get('blocks'))
             
             # 步驟 2: 如果有更精確的自訂解析器匹配，讓其結果選擇性地覆蓋通用結果。
             custom_data = None
@@ -110,34 +102,25 @@ class OCROrchestrator:
 
             if custom_data:
                 # 自訂解析器對其項目列表有最高優先權。
-                if 'items' in custom_data:
-                    final_extracted_data['items'] = custom_data['items']
-                # 它們也可能提供更準確的總金額。
-                if 'declared_total' in custom_data:
-                    final_extracted_data['declared_total'] = custom_data['declared_total']
-                # 確保也覆蓋計算出的總額
-                if 'calculated_total' in custom_data:
-                    final_extracted_data['calculated_total'] = custom_data['calculated_total']
-                # 如果自訂解析器提供了日期，它應該有更高的優先權。
-                if 'date' in custom_data and custom_data['date']:
-                    final_extracted_data['date'] = custom_data['date']
+                for key in ['items', 'declared_total', 'calculated_total', 'date']:
+                    if key in custom_data:
+                        final_extracted_data[key] = custom_data[key]
                 # 合併自訂欄位，例如 'final_balance'
                 if 'custom_fields' in custom_data:
                     final_extracted_data.setdefault('custom_fields', {}).update(custom_data['custom_fields'])
            
             # 步驟 4: 驗證資料。
-            validated_data = self.validator.validate(final_extracted_data, ocr_result_context.get('confidence', 0))
+            validated_data = self.validator.validate(final_extracted_data, ocr_result.get('confidence', 0))
            
             # 步驟 5: 最終合併。以提取的資料為基礎，並更新驗證結果。
-            final_data = final_extracted_data.copy()
-            final_data.update(validated_data)
+            final_data = {**final_extracted_data, **validated_data}
             
             return {
                 'photo_id': photo_id,
-                'ocr_result': ocr_result_context,
+                'ocr_result': ocr_result,
                 'extracted_data': final_data,
                 'status': 'success',
-                'needs_review': validated_data.get('has_anomalies', False) or ocr_result_context.get('confidence', 0) < 0.6
+                'needs_review': validated_data.get('has_anomalies', False) or ocr_result.get('confidence', 0) < 0.6
             }
         except Exception as e:
             logger.error(f"Post-OCR processing failed: {e}", exc_info=True)

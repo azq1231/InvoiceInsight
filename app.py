@@ -3,9 +3,12 @@ import logging
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify, send_file, flash
 from src.auth.firebase_auth import FirebaseAuthManager
 from src.processing.ocr_orchestrator import OCROrchestrator
+from src.processing.reparser import Reparser
+from src.processing.general_ledger_parser import SPECIAL_EXPENSE_KEYWORDS as DEFAULT_EXPENSE_KEYWORDS
 from src.utils.config import get_config
 from src.export.excel_exporter import export_to_excel
 from google.oauth2.credentials import Credentials
+from src.user_settings import UserSettingsManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,8 +33,6 @@ def create_app():
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
         logger.warning("OAUTHLIB_INSECURE_TRANSPORT is enabled. This is not safe for production.")
 
-    auth_manager = FirebaseAuthManager()
-
     @app.route('/login')
     def login():
         return render_template('login.html', config=app.config['FIREBASE_CONFIG'])
@@ -39,6 +40,7 @@ def create_app():
     @app.route('/sessionLogin', methods=['POST'])
     def session_login():
         data = request.get_json()
+        auth_manager = FirebaseAuthManager()
         id_token = data.get('idToken')
         access_token = data.get('accessToken')
 
@@ -79,7 +81,52 @@ def create_app():
         if 'user' not in session:
             return redirect(url_for('login'))
         
-        return render_template('index.html', user=session['user'])
+        settings_manager = UserSettingsManager()
+        user_id = session['user'].get('id', '')
+        # Get user-specific keywords. If they don't exist, use the default ones.
+        user_keywords = settings_manager.get_expense_keywords(user_id)
+        if user_keywords is None:
+            user_keywords = DEFAULT_EXPENSE_KEYWORDS
+
+        return render_template('index.html', user=session['user'], saved_keywords=','.join(user_keywords))
+
+    @app.route('/settings', methods=['GET', 'POST'])
+    def settings():
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        
+        settings_manager = UserSettingsManager()
+        user_id = session['user'].get('id', '')
+
+        if request.method == 'POST':
+            keywords_str = request.form.get('keywords', '')
+            # Split by newline, strip whitespace, and filter out empty lines
+            keywords_list = [k.strip() for k in keywords_str.splitlines() if k.strip()]
+            settings_manager.save_expense_keywords(user_id, keywords_list)
+            # Also update the session to reflect the change immediately
+            session['user_keywords'] = keywords_list
+            flash('關鍵字設定已成功儲存！', 'success')
+            return redirect(url_for('settings'))
+
+        user_keywords = settings_manager.get_expense_keywords(user_id)
+        if user_keywords is None:
+            user_keywords = DEFAULT_EXPENSE_KEYWORDS
+        
+        return render_template('settings.html', user=session['user'], keywords=user_keywords)
+
+    @app.route('/get_keywords', methods=['GET'])
+    def get_keywords():
+        """An API endpoint to fetch the user's current keywords."""
+        if 'user' not in session:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        settings_manager = UserSettingsManager()
+        user_id = session['user'].get('id', '')
+        user_keywords = settings_manager.get_expense_keywords(user_id)
+        if user_keywords is None:
+            user_keywords = DEFAULT_EXPENSE_KEYWORDS
+        
+        return jsonify({'keywords': user_keywords})
 
     @app.route('/upload', methods=['POST'])
     def upload_file():
@@ -94,7 +141,9 @@ def create_app():
         if 'invoiceImage' not in request.files or not request.files['invoiceImage'].filename:
             return jsonify({'error': 'No file selected'}), 400
         
-        file = request.files['invoiceImage']
+        file = request.files.get('invoiceImage')
+        keywords_str = request.form.get('expense_keywords', '')
+        expense_keywords = [k.strip() for k in keywords_str.split(',') if k.strip()]
 
         try:
             # Initialize the orchestrator for each request with the user's session credentials.
@@ -103,7 +152,7 @@ def create_app():
             image_bytes = file.read()
             logger.info(f"User '{session['user'].get('name')}' uploaded file: {file.filename}, size: {len(image_bytes)} bytes")
             
-            ocr_result = ocr_orchestrator.process_image(image_bytes, photo_id=file.filename)
+            ocr_result = ocr_orchestrator.process_image(image_bytes, photo_id=file.filename, expense_keywords=expense_keywords)
             
             # Store result in session for export
             if ocr_result.get('status') == 'success':
@@ -124,20 +173,17 @@ def create_app():
         if 'user' not in session:
             return jsonify({'error': 'Unauthorized'}), 401
 
+        reparser = Reparser()
         data = request.get_json()
-        raw_text = data.get('raw_text')
-        original_ocr_result = data.get('ocr_result')
+        ocr_result = data.get('ocr_result')
         expense_keywords = data.get('expense_keywords') # Get keywords from request
 
-        if not raw_text:
-            return jsonify({'error': 'No raw_text provided'}), 400
+        if not ocr_result or 'full_text' not in ocr_result:
+            return jsonify({'error': 'No ocr_result with full_text provided'}), 400
 
         try:
-            # We can initialize a dummy orchestrator since we don't need OCR engines.
-            # The parsing logic is self-contained.
-            orchestrator = OCROrchestrator()
-            # Pass keywords to the reprocess_text method
-            reparsed_result = orchestrator.reprocess_text(raw_text, original_ocr_result, expense_keywords=expense_keywords)
+            # Use the new, lightweight Reparser which has no external dependencies.
+            reparsed_result = reparser.reprocess(ocr_result, expense_keywords=expense_keywords)
             return jsonify(reparsed_result)
         except Exception as e:
             logger.error(f"Reparsing failed: {e}", exc_info=True)
