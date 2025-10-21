@@ -59,8 +59,14 @@
             <!-- Right Panel: Results -->
             <div class="results-panel">
                 <h3>OCR Result:</h3>
-                <div id="export-section" style="display: none; margin-bottom: 1em;">
-                    <a href="/export" target="_blank">下載 Excel 檔案</a>
+                <div id="actions-section" style="display: none; margin-bottom: 1em;">
+                    <a id="export-link" href="/export" target="_blank" style="margin-right: 1em;">下載 Excel 檔案</a>
+                    <br><br>
+                    <label for="expense-keywords">支出關鍵字 (以逗號分隔):</label>
+                    <input type="text" id="expense-keywords" name="expense-keywords" size="40" 
+                           placeholder="例如: 冷氣,順茂,醬油"
+                           style="margin-right: 1em;">
+                    <button id="recalculate-btn" style="margin-left: 1em;">重新計算</button>
                 </div>
                 <div id="results-container"></div>
             </div>
@@ -68,10 +74,45 @@
     </div>
 
     <script>
+        let lastSuccessfulData = null; // Store the last successful result with raw text
+
+        function updateParsedResults(data) {
+            // This function is similar to renderResults but only updates the parsed parts.
+            const container = document.getElementById('results-container');
+            
+            // Clear only summary, anomalies, and items table, but keep raw text and image.
+            ['results-summary', 'results-anomalies', 'results-table', 'h4'].forEach(className => {
+                const elements = container.getElementsByClassName(className);
+                Array.from(elements).forEach(el => el.remove());
+            });
+
+            renderSummaryAndItems(data); // A new helper function to render just the parsed data
+        }
+
         function renderResults(data) {
             const container = document.getElementById('results-container');
             container.innerHTML = ''; // Clear previous results
 
+            // --- Raw OCR Text ---
+            const rawText = data.ocr_result ? data.ocr_result.full_text : 'No raw text available.';
+            const rawTextDiv = document.createElement('div');
+            rawTextDiv.className = 'results-summary'; // Reuse style for consistency
+            rawTextDiv.style.marginBottom = '1.5em';
+
+            const rawTextTitle = document.createElement('h4');
+            rawTextTitle.textContent = '原始辨識文字';
+            rawTextDiv.appendChild(rawTextTitle);
+
+            const rawTextContent = document.createElement('pre');
+            rawTextContent.style.whiteSpace = 'pre-wrap'; // Ensure long lines wrap
+            rawTextContent.textContent = rawText;
+            rawTextDiv.appendChild(rawTextContent);
+            container.appendChild(rawTextDiv);
+
+            renderSummaryAndItems(data);
+        }
+
+        function renderSummaryAndItems(data) {
             const extracted = data.extracted_data || {};
             const custom = extracted.custom_fields || {};
 
@@ -93,13 +134,18 @@
                 }
             };
 
+            const container = document.getElementById('results-container');
+
             addSummaryItem('OCR 引擎', data.ocr_result ? data.ocr_result.engine : 'N/A');
-            addSummaryItem('最終結餘', custom.final_balance);
-            addSummaryItem('計算總收入', extracted.calculated_total);
+            addSummaryItem('日期', extracted.date);
             addSummaryItem('宣告總收入', extracted.declared_total);
-            addSummaryItem('計算總折扣', custom.calculated_total_discount);
-            addSummaryItem('宣告總折扣', custom.declared_discount_total);
-            
+            addSummaryItem('計算總收入', extracted.calculated_total);
+            addSummaryItem('宣告折扣 (來自 x 行)', custom.declared_discount);
+            addSummaryItem('宣告折扣總額 (來自 加...X... 行)', custom.declared_special_discount_total);
+            addSummaryItem('計算總折扣 (來自項目列表)', custom.calculated_total_discount);
+            addSummaryItem('宣告結餘 (獨立數字行)', custom.declared_balance);
+            addSummaryItem('最終結餘', custom.final_balance);
+
             summaryDiv.appendChild(summaryList);
             
             // --- Anomalies ---
@@ -177,11 +223,11 @@
             const spinner = document.getElementById('spinner');
             const imagePreview = document.getElementById('image-preview');
             const resultsContainer = document.getElementById('results-container');
-            const exportSection = document.getElementById('export-section');
+            const actionsSection = document.getElementById('actions-section');
 
             // Clear previous results and show spinner
             spinner.style.display = 'block';
-            exportSection.style.display = 'none';
+            actionsSection.style.display = 'none';
             imagePreview.innerHTML = '';
             resultsContainer.innerHTML = '';
 
@@ -210,19 +256,58 @@
                 spinner.style.display = 'none';
                 if (data.error) {
                     resultsContainer.innerHTML = `<p style="color: red;"><strong>錯誤:</strong> ${data.error}</p>`;
-                    exportSection.style.display = 'none';
+                    actionsSection.style.display = 'none';
                 } else {
+                    lastSuccessfulData = data; // Store the full result
                     renderResults(data);
                     if (data.status === 'success') {
-                        exportSection.style.display = 'block';
+                        actionsSection.style.display = 'block';
                     }
                 }
             })
             .catch(error => {
                 spinner.style.display = 'none';
                 resultsContainer.innerHTML = `<p style="color: red;"><strong>發生預期外的錯誤:</strong> ${error.message}</p>`;
-                exportSection.style.display = 'none';
+                actionsSection.style.display = 'none';
                 console.error('Upload failed:', error);
+            });
+        });
+
+        document.getElementById('recalculate-btn').addEventListener('click', function() {
+            if (!lastSuccessfulData || !lastSuccessfulData.ocr_result) {
+                alert('沒有可重新計算的辨識文字。請先上傳並辨識一張圖片。');
+                return;
+            }
+
+            const spinner = document.getElementById('spinner');
+            spinner.style.display = 'block';
+
+            const keywordsInput = document.getElementById('expense-keywords').value;
+            const expenseKeywords = keywordsInput.split(',').map(k => k.trim()).filter(k => k);
+
+            fetch('/reparse', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    raw_text: lastSuccessfulData.ocr_result.full_text,
+                    ocr_result: lastSuccessfulData.ocr_result, // Pass the context
+                    expense_keywords: expenseKeywords // Pass the new keywords
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                spinner.style.display = 'none';
+                if (data.error) {
+                    alert(`重新計算失敗: ${data.error}`);
+                } else {
+                    updateParsedResults(data);
+                }
+            })
+            .catch(error => {
+                spinner.style.display = 'none';
+                alert(`重新計算時發生錯誤: ${error.message}`);
             });
         });
     </script>
