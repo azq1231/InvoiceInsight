@@ -1,10 +1,12 @@
 import json
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+from flask import current_app
 
 logger = logging.getLogger(__name__)
 
+# The path is now relative to the instance folder, which is more robust.
 SETTINGS_FILE_PATH = os.path.join('data', 'user_settings.json')
 
 class UserSettingsManager:
@@ -12,24 +14,29 @@ class UserSettingsManager:
 
     def __init__(self, file_path: str = SETTINGS_FILE_PATH):
         self.file_path = file_path
-
-    def _load_settings(self) -> Dict:
+        # Ensure the file path is absolute, relative to the app's instance path
+        # This check will be done lazily to avoid context issues during initialization.
+        self._absolute_path = None
+    
+    def _load_settings(self) -> Dict[str, Any]:
         """Loads settings from the JSON file."""
+        path = self._get_absolute_path()
         try:
-            if os.path.exists(self.file_path):
-                with open(self.file_path, 'r', encoding='utf-8') as f:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             return {}
         except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Error loading user settings from {self.file_path}: {e}")
+            logger.error(f"Error loading user settings from {path}: {e}")
             # If the file is corrupted, start with empty settings
             return {}
 
-    def _save_settings(self, settings_data: Dict):
+    def _save_settings(self, settings_data: Dict[str, Any]):
         """Saves the current settings to the JSON file."""
+        path = self._get_absolute_path()
         try:
-            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            with open(self.file_path, 'w', encoding='utf-8') as f:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
                 json.dump(settings_data, f, ensure_ascii=False, indent=4)
         except IOError as e:
             logger.error(f"Error saving user settings to {self.file_path}: {e}")
@@ -52,3 +59,12 @@ class UserSettingsManager:
         current_settings[user_id]['expense_keywords'] = keywords
         self._save_settings(current_settings)
         logger.info(f"Saved expense keywords for user_id: {user_id[:8]}...")
+    
+    def _get_absolute_path(self) -> str:
+        """Lazily computes and caches the absolute file path within an app context."""
+        if self._absolute_path is None:
+            if not os.path.isabs(self.file_path):
+                self._absolute_path = os.path.join(current_app.instance_path, self.file_path)
+            else:
+                self._absolute_path = self.file_path
+        return self._absolute_path

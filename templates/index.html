@@ -81,11 +81,12 @@
             const container = document.getElementById('results-container');
             
             // Clear only summary, anomalies, and items table, but keep raw text and image.
-            ['results-summary', 'results-anomalies', 'results-table', 'h4'].forEach(className => {
-                const elements = container.getElementsByClassName(className);
-                Array.from(elements).forEach(el => el.remove());
+            // Use unique IDs for precise removal to avoid duplication issues.
+            const elementsToRemove = ['analysis-summary', 'items-list-container'];
+            elementsToRemove.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.remove();
             });
-
             renderSummaryAndItems(data); // A new helper function to render just the parsed data
         }
 
@@ -94,20 +95,24 @@
             container.innerHTML = ''; // Clear previous results
 
             // --- Raw OCR Text ---
+            // Use <details> and <summary> for a native collapsible section
             const rawText = data.ocr_result ? data.ocr_result.full_text : 'No raw text available.';
-            const rawTextDiv = document.createElement('div');
-            rawTextDiv.className = 'results-summary'; // Reuse style for consistency
-            rawTextDiv.style.marginBottom = '1.5em';
+            const detailsElement = document.createElement('details');
+            detailsElement.className = 'results-summary'; // Reuse style for consistency
+            detailsElement.style.marginBottom = '1.5em';
 
-            const rawTextTitle = document.createElement('h4');
-            rawTextTitle.textContent = '原始辨識文字';
-            rawTextDiv.appendChild(rawTextTitle);
+            const summaryElement = document.createElement('summary');
+            summaryElement.style.cursor = 'pointer';
+            summaryElement.style.fontWeight = 'bold';
+            summaryElement.textContent = '原始辨識文字 (點擊展開)';
+            detailsElement.appendChild(summaryElement);
 
             const rawTextContent = document.createElement('pre');
             rawTextContent.style.whiteSpace = 'pre-wrap'; // Ensure long lines wrap
+            rawTextContent.style.marginTop = '1em'; // Add some space below the summary
             rawTextContent.textContent = rawText;
-            rawTextDiv.appendChild(rawTextContent);
-            container.appendChild(rawTextDiv);
+            detailsElement.appendChild(rawTextContent);
+            container.appendChild(detailsElement);
 
             renderSummaryAndItems(data);
         }
@@ -119,6 +124,7 @@
             // --- Summary ---
             const summaryDiv = document.createElement('div');
             summaryDiv.className = 'results-summary';
+            summaryDiv.id = 'analysis-summary'; // Assign a unique ID
             
             const summaryTitle = document.createElement('h4');
             summaryTitle.textContent = '分析結果摘要';
@@ -148,43 +154,26 @@
 
             summaryDiv.appendChild(summaryList);
             
-            // --- Anomalies ---
-            const anomalies = extracted.anomalies || [];
-            if (anomalies.length > 0) {
-                const anomalyDiv = document.createElement('div');
-                anomalyDiv.className = 'results-anomalies';
-                
-                const anomalyTitle = document.createElement('h4');
-                anomalyTitle.textContent = '🔍 待复核项目';
-                anomalyDiv.appendChild(anomalyTitle);
-
-                const anomalyList = document.createElement('ul');
-                anomalies.forEach(text => {
-                    const li = document.createElement('li');
-                    li.textContent = text;
-                    anomalyList.appendChild(li);
-                });
-                anomalyDiv.appendChild(anomalyList);
-                
-                container.appendChild(anomalyDiv);
-            }
-
             container.appendChild(summaryDiv); // Add summary after anomalies
 
             // --- Items Table ---
             const items = extracted.items || [];
             if (items.length > 0) {
+                const itemsContainer = document.createElement('div');
+                itemsContainer.id = 'items-list-container'; // Assign a unique ID to the whole block
+
                 const tableTitle = document.createElement('h4');
                 tableTitle.textContent = '項目清單';
                 tableTitle.style.marginTop = '1.5em';
-                container.appendChild(tableTitle);
+                itemsContainer.appendChild(tableTitle);
 
                 const table = document.createElement('table');
                 table.className = 'results-table';
                 
                 const thead = document.createElement('thead');
                 const headerRow = document.createElement('tr');
-                const headers = ['項目', '金額', '折扣', '備註'];
+                // Removed '備註' (Note) as it's not currently used or editable.
+                const headers = ['項目', '金額', '折扣', '類別'];
                 headers.forEach(text => {
                     const th = document.createElement('th');
                     th.textContent = text;
@@ -196,21 +185,130 @@
                 const tbody = document.createElement('tbody');
                 items.forEach(item => {
                     const tr = document.createElement('tr');
+                    tr.dataset.category = item.category; // Store category for re-categorization
+
                     const name = item.name || item.item || 'N/A';
                     const amount = item.amount !== undefined ? item.amount : (item.cost !== undefined ? item.cost : 'N/A');
                     const discount = item.discount !== undefined ? item.discount : '-';
-                    const note = item.note || '-';
+                    const category = item.category || 'N/A';
                     
-                    [name, amount, discount, note].forEach(text => {
-                        const td = document.createElement('td');
-                        td.textContent = text;
-                        tr.appendChild(td);
+                    // The order must match the headers
+                    [name, amount, discount, category].forEach((text, index) => {
+                        if (index === 3) { // Category column
+                            const td = document.createElement('td');
+                            const select = document.createElement('select');
+                            select.classList.add('item-category');
+                            ['收入', '支出', '匯'].forEach(cat => {
+                                const option = document.createElement('option');
+                                option.value = cat;
+                                option.textContent = cat;
+                                if (cat === text) {
+                                    option.selected = true;
+                                }
+                                select.appendChild(option);
+                            });
+                            td.appendChild(select);
+                            tr.appendChild(td);
+                        } else {
+                            const td = document.createElement('td');
+                            td.textContent = text;
+                            // Make name, amount, and discount cells editable
+                            if (index <= 2) { // 0: name, 1: amount, 2: discount
+                                td.contentEditable = "true";
+                                td.classList.add(['item-name', 'item-amount', 'item-discount'][index]);
+                            }
+                            tr.appendChild(td);
+                        }
                     });
                     tbody.appendChild(tr);
                 });
                 table.appendChild(tbody);
-                container.appendChild(table);
+                itemsContainer.appendChild(table);
+
+                // --- Add Item Button ---
+                const addButtonContainer = document.createElement('div');
+                addButtonContainer.className = 'add-item-btn-container';
+                addButtonContainer.style.marginTop = '1em';
+
+                const addButton = document.createElement('button');
+                addButton.id = 'add-item-btn';
+                addButton.textContent = '＋ 新增項目';
+                addButton.onclick = addNewItemRow; // Attach click handler
+                
+                addButtonContainer.appendChild(addButton);
+                itemsContainer.appendChild(addButtonContainer);
+
+                container.appendChild(itemsContainer);
             }
+        }
+
+        // Function to add a new empty row to the items table
+        function addNewItemRow() {
+            const tbody = document.querySelector('.results-table tbody');
+            if (!tbody) return;
+
+            const tr = document.createElement('tr');
+            
+            // Create cells based on headers, but make them editable
+            const nameTd = document.createElement('td');
+            nameTd.contentEditable = "true";
+            nameTd.className = 'item-name';
+            
+            const amountTd = document.createElement('td');
+            amountTd.contentEditable = "true";
+            amountTd.className = 'item-amount';
+            amountTd.textContent = '0';
+
+            const discountTd = document.createElement('td');
+            discountTd.contentEditable = "true";
+            discountTd.className = 'item-discount';
+            discountTd.textContent = '0';
+
+            const categoryTd = document.createElement('td');
+            const select = document.createElement('select');
+            select.className = 'item-category';
+            ['收入', '支出', '匯'].forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat;
+                option.textContent = cat;
+                select.appendChild(option);
+            });
+            categoryTd.appendChild(select);
+
+            tr.appendChild(nameTd);
+            tr.appendChild(amountTd);
+            tr.appendChild(discountTd);
+            tr.appendChild(categoryTd);
+
+            tbody.appendChild(tr);
+            nameTd.focus(); // Automatically focus on the new item's name field
+        }
+
+        // Function to collect edited items from the table
+        function collectEditedItems() {
+            const editedItems = [];
+            const tableRows = document.querySelectorAll('.results-table tbody tr');
+            tableRows.forEach(row => {
+                const nameCell = row.querySelector('.item-name');
+                const amountCell = row.querySelector('.item-amount');
+                const discountCell = row.querySelector('.item-discount');
+                const categorySelect = row.querySelector('.item-category');
+
+                if (nameCell && amountCell && categorySelect) {
+                    const name = nameCell.textContent.trim();
+                    const amount = parseFloat(amountCell.textContent.trim().replace(/,/g, '')) || 0;
+                    const discount = parseInt(discountCell.textContent.trim()) || 0;
+                    const category = categorySelect.value;
+                    
+                    editedItems.push({
+                        name: name,
+                        amount: amount,
+                        discount: discount,
+                        category: category // Use the value from the dropdown
+                    });
+                }
+            });
+            return editedItems;
         }
 
         document.getElementById('upload-form').addEventListener('submit', function(event) {
@@ -285,17 +383,20 @@
             const spinner = document.getElementById('spinner');
             spinner.style.display = 'block';
 
+            const editedItems = collectEditedItems(); // Collect items from the editable table
             const keywordsInput = document.getElementById('expense-keywords').value;
             const expenseKeywords = keywordsInput.split(',').map(k => k.trim()).filter(k => k);
 
             fetch('/reparse', {
                 method: 'POST',
                 headers: {
+                    // Ensure Content-Type is application/json for sending JSON body
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ 
-                    ocr_result: lastSuccessfulData.ocr_result, // Pass the entire OCR result object
-                    expense_keywords: expenseKeywords
+                    ocr_result: lastSuccessfulData, // Pass the entire lastSuccessfulData object
+                    expense_keywords: expenseKeywords,
+                    edited_items: editedItems // Pass the edited items
                 })
             })
             .then(response => response.json())

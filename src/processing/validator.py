@@ -58,10 +58,10 @@ class DataValidator:
     def _check_total_mismatch(self, data: Dict) -> Optional[Dict]:
         """Check if item totals match declared total"""
         items = data.get('items', [])
-        declared_total = data.get('declared_total', 0)
-        calculated_total = data.get('calculated_total', 0)
+        declared_total = data.get('declared_total') # Can be None
+        calculated_total = data.get('calculated_total', 0.0)
         
-        if declared_total == 0:
+        if declared_total is None or declared_total == 0:
             return None
         
         diff = abs(calculated_total - declared_total)

@@ -55,6 +55,7 @@
                     const user = authResult.user;
                     
                     user.getIdToken().then(function(idToken) {
+                        // The clock skew is now handled on the server, so we can send immediately.
                         fetch('/sessionLogin', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },

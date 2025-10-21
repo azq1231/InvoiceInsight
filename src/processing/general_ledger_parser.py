@@ -2,22 +2,24 @@ import re
 import logging
 from datetime import datetime
 import math
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
 
 # Keywords that indicate a special expense rule might apply
 # These could be moved to config if they become more complex
-SPECIAL_EXPENSE_KEYWORDS = ['冷氣外機', '冷氣外机', '順茂', '顺茂']
+SPECIAL_EXPENSE_KEYWORDS = ['冷氣外機', '冷氣外机', '順茂', '顺茂', '匯']
 
 # --- Shared Regex Patterns ---
 DATE_PATTERN_1 = re.compile(r'(\d{2,3})年(\d{1,2})月(\d{1,2})日')
 DATE_PATTERN_2 = re.compile(r'(\d{2,3})\s+(\d{1,2})/(\d{1,2})')
+# New pattern for compact dates like "11410/21"
+DATE_PATTERN_3 = re.compile(r'^(1\d{2})(\d{1,2})/(\d{1,2})')
 # Pattern for items where name and amount are NOT separated by a space (e.g., "昌雄250")
 ITEM_PATTERN_NO_SPACE = re.compile(r'^([\u4e00-\u9fa5a-zA-Z#]+)([0-9,.]+)(.*)$')
 # Pattern for items where name and amount ARE separated by a space (e.g., "#64 50")
 # This is the general pattern that also handles discounts.
-ITEM_PATTERN_WITH_SPACE = re.compile(r'^(.+?)\s*[:：\s]\s*([0-9,.]+)(.*)$')
+ITEM_PATTERN_WITH_SPACE = re.compile(r'^(.+?)\s*[:：\s、]\s*([0-9,.]+)(.*)$')
 # New pattern to specifically handle cases like "AA 4.330" -> name: "AA 4", amount: "330"
 # It greedily captures the last number block as the amount.
 ITEM_PATTERN_NAME_WITH_NUM = re.compile(r'^(.+?)\s+([0-9,.]+)$')
@@ -40,6 +42,54 @@ def is_general_ledger(ocr_text: str) -> bool:
     # Trigger if any of these common patterns are found.
     return has_date or has_standalone_number or has_item
 
+def _calculate_summary_from_items(
+    income_items: List[Dict], 
+    expense_items: List[Dict], 
+    ocr_text: str, 
+    declared_total: Optional[float], 
+    declared_discount: Optional[float], 
+    declared_special_total: Optional[float], 
+    declared_special_discount_total: Optional[float], 
+    declared_balance: Optional[float], 
+    extracted_date: Optional[str]
+) -> Dict:
+    """
+    Helper function to calculate summary data from a given list of income and expense items.
+    This allows re-calculation after items have been potentially edited.
+    """
+    all_items = income_items + expense_items
+    calculated_total_income = sum(item['amount'] for item in income_items)
+    calculated_total_discount = sum(item['discount'] for item in all_items)
+
+    calculated_expense = sum(
+        round((item['amount'] * 0.1) / 10) * 10 for item in expense_items
+    )
+    final_balance = calculated_total_income - calculated_expense
+
+    final_declared_total = declared_special_total if declared_special_total is not None else (declared_total or None)
+
+    anomalies = [] # This helper doesn't generate item-specific anomalies, but can check totals.
+    if final_declared_total is not None and not abs(final_declared_total - calculated_total_income) < 0.01:
+        anomalies.append(f"總額不符：計算總額 ({calculated_total_income}) 與宣告總額 ({final_declared_total}) 不一致！")
+
+    return {
+        'date': extracted_date,
+        'items': all_items,
+        'calculated_total': calculated_total_income,
+        'declared_total': final_declared_total, # Keep it as None if not found, don't fallback to calculated.
+        'raw_text': ocr_text, # Keep original raw text for context
+        'anomalies': anomalies,
+        'has_anomalies': len(anomalies) > 0,
+        'custom_fields': {
+            'final_balance': final_balance,
+            'declared_balance': declared_balance,
+            'calculated_total_discount': calculated_total_discount,
+            'declared_discount': declared_discount, # This is from 'x 50' line
+            'declared_special_total': declared_special_total, # From '加 總額 X 折扣總額'
+            'declared_special_discount_total': declared_special_discount_total
+        }
+    }
+
 def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
     """Parse a general ledger format from OCR text."""
     # Use provided keywords, or fall back to the default list.
@@ -55,7 +105,22 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
     ocr_text = re.sub(r'([\u4e00-\u9fa5a-zA-Z])\.(?=\d)', r'\1 ', ocr_text)
 
     anomalies = []
-    lines = ocr_text.strip().split('\n')
+    original_lines = ocr_text.strip().split('\n')
+    lines = []
+    # Heuristic to split lines that were incorrectly merged by OCR with a '/'
+    # e.g., "磊成匯x101/0顺天9487" -> "磊成匯x10" and "10/20顺天9487"
+    # This regex looks for a pattern like (text)(digit)/(digit)(text)
+    # We add a condition that both parts must contain some non-digit characters to avoid splitting dates.
+    merge_split_pattern = re.compile(r'^(.*[a-zA-Z\u4e00-\u9fa5].*\d)\s*/\s*(\d.*[a-zA-Z\u4e00-\u9fa5].*)$')
+    for line in original_lines:
+        match = merge_split_pattern.match(line)
+        if match:
+            logger.info(f"Splitting merged line: '{line}' -> '{match.group(1)}' and '{match.group(2)}'")
+            lines.append(match.group(1))
+            lines.append(match.group(2))
+        else:
+            lines.append(line)
+
     declared_total = None
     declared_discount = None
     declared_special_total = None
@@ -71,7 +136,8 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
         # Try matching both date patterns
         date_match_1 = DATE_PATTERN_1.search(line)
         date_match_2 = DATE_PATTERN_2.search(line)
-        date_match = date_match_1 or date_match_2
+        date_match_3 = DATE_PATTERN_3.search(line)
+        date_match = date_match_1 or date_match_2 or date_match_3
 
         if date_match:
             if extracted_date is None: # Only take the first valid date found
@@ -227,7 +293,14 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
             }
 
             # Categorize as expense or income based on keywords
-            is_expense = any(keyword.strip() in name for keyword in keywords_to_use if keyword.strip())
+            # Special case for '匯'
+            if '匯' in name:
+                item_data['category'] = '匯'
+                # For now, '匯' is treated as income for calculation purposes.
+                income_items.append(item_data)
+                continue
+
+            is_expense = any(keyword.strip() in name for keyword in keywords_to_use if keyword.strip() and keyword.strip() != '匯')
             if is_expense:
                 item_data['category'] = '支出'
                 expense_items.append(item_data)
@@ -246,50 +319,29 @@ def parse(ocr_text: str, expense_keywords: Optional[List[str]] = None) -> dict:
                 unmatched_lines_after_parsing.append(line)
 
     # --- Calculations & Validation ---
-    # Now, process the remaining unmatched lines to find total and balance
+    # Process the remaining unmatched lines to find total and balance
+    # This logic is now part of the _calculate_summary_from_items helper, but we need to find declared_total/balance first.
+    temp_declared_total = declared_total
+    temp_declared_balance = declared_balance
+
     standalone_numbers = [line for line in unmatched_lines_after_parsing if line.strip().isdigit()]
     if len(standalone_numbers) >= 1:
         # The largest standalone number is most likely the declared total income
-        declared_total = float(max(standalone_numbers, key=float))
-        logger.info(f"Found declared total income from unmatched numbers: {declared_total}")
+        temp_declared_total = float(max(standalone_numbers, key=float))
+        logger.info(f"Found declared total income from unmatched numbers: {temp_declared_total}")
     if len(standalone_numbers) >= 2:
         # The last standalone number is the declared balance
-        declared_balance = float(standalone_numbers[-1])
-        logger.info(f"Found declared balance from unmatched numbers: {declared_balance}")
+        temp_declared_balance = float(standalone_numbers[-1])
+        logger.info(f"Found declared balance from unmatched numbers: {temp_declared_balance}")
 
-    all_items = income_items + expense_items
-    calculated_total_income = sum(item['amount'] for item in income_items)
-    calculated_total_discount = sum(item['discount'] for item in all_items)
-
-    # --- Special Balance Calculation ---
-    # Apply the formula to each expense item individually, then sum them up.
-    calculated_expense = sum(
-        round((item['amount'] * 0.1) / 10) * 10 for item in expense_items
+    return _calculate_summary_from_items(
+        income_items, 
+        expense_items, 
+        ocr_text, 
+        temp_declared_total, 
+        declared_discount, 
+        declared_special_total, 
+        declared_special_discount_total, 
+        temp_declared_balance, 
+        extracted_date
     )
-    final_balance = calculated_total_income - calculated_expense
-
-    # Use the special declared total if found, otherwise the general one
-    final_declared_total = declared_special_total if declared_special_total is not None else (declared_total or None)
-
-    if final_declared_total is not None and not abs(final_declared_total - calculated_total_income) < 0.01:
-        anomalies.append(f"總額不符：計算總額 ({calculated_total_income}) 與宣告總額 ({final_declared_total}) 不一致！")
-
-    # --- Structuring Output ---
-    extracted_data = {
-        'date': extracted_date,
-        'items': all_items,
-        'calculated_total': calculated_total_income,
-        'declared_total': final_declared_total or calculated_total_income,
-        'raw_text': ocr_text,
-        'anomalies': anomalies,
-        'has_anomalies': len(anomalies) > 0,
-        'custom_fields': {
-            'final_balance': final_balance,
-            'declared_balance': declared_balance,
-            'calculated_total_discount': calculated_total_discount,
-            'declared_discount': declared_discount,
-            'declared_special_discount_total': declared_special_discount_total
-        }
-    }
-    
-    return extracted_data

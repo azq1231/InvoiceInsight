@@ -16,22 +16,31 @@ logger = logging.getLogger(__name__)
 def create_app():
     """Application Factory Pattern"""
     app = Flask(__name__)
+    
+    # --- Initialize Extensions ---
+    # Attach the settings manager to the app object to ensure a true singleton.
+    app.settings_manager = UserSettingsManager()
+
+    # Ensure the instance folder exists
+    os.makedirs(app.instance_path, exist_ok=True)
 
     # --- Configuration ---
     config = get_config()
-    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
+    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_default_secret_key_for_dev_do_not_use_in_prod')
     app.config['FIREBASE_CONFIG'] = config.get('firebase.web_app_config')
     
-    # Security warning for default secret key
-    if not app.config['SECRET_KEY']:
+    if app.config['SECRET_KEY'] == 'a_default_secret_key_for_dev_do_not_use_in_prod':
         logger.warning("FLASK_SECRET_KEY is not set! Using a default, insecure key for development.")
-        app.config['SECRET_KEY'] = 'a_default_secret_key_for_dev_do_not_use_in_prod'
 
     # This allows OAuth to run over HTTP for local development.
     # In production, you MUST use HTTPS and remove this.
     if app.debug:
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
         logger.warning("OAUTHLIB_INSECURE_TRANSPORT is enabled. This is not safe for production.")
+
+    # Initialize services here, they will be available in the app context
+    auth_manager = FirebaseAuthManager()
+    reparser = Reparser()
 
     @app.route('/login')
     def login():
@@ -40,7 +49,6 @@ def create_app():
     @app.route('/sessionLogin', methods=['POST'])
     def session_login():
         data = request.get_json()
-        auth_manager = FirebaseAuthManager()
         id_token = data.get('idToken')
         access_token = data.get('accessToken')
 
@@ -81,8 +89,8 @@ def create_app():
         if 'user' not in session:
             return redirect(url_for('login'))
         
-        settings_manager = UserSettingsManager()
-        user_id = session['user'].get('id', '')
+        settings_manager = app.settings_manager
+        user_id = session['user'].get('uid', '')
         # Get user-specific keywords. If they don't exist, use the default ones.
         user_keywords = settings_manager.get_expense_keywords(user_id)
         if user_keywords is None:
@@ -95,16 +103,14 @@ def create_app():
         if 'user' not in session:
             return redirect(url_for('login'))
         
-        settings_manager = UserSettingsManager()
-        user_id = session['user'].get('id', '')
+        settings_manager = app.settings_manager
+        user_id = session['user'].get('uid', '')
 
         if request.method == 'POST':
             keywords_str = request.form.get('keywords', '')
             # Split by newline, strip whitespace, and filter out empty lines
             keywords_list = [k.strip() for k in keywords_str.splitlines() if k.strip()]
             settings_manager.save_expense_keywords(user_id, keywords_list)
-            # Also update the session to reflect the change immediately
-            session['user_keywords'] = keywords_list
             flash('關鍵字設定已成功儲存！', 'success')
             return redirect(url_for('settings'))
 
@@ -120,8 +126,8 @@ def create_app():
         if 'user' not in session:
             return jsonify({'error': 'Unauthorized'}), 401
         
-        settings_manager = UserSettingsManager()
-        user_id = session['user'].get('id', '')
+        settings_manager = app.settings_manager
+        user_id = session['user'].get('uid', '')
         user_keywords = settings_manager.get_expense_keywords(user_id)
         if user_keywords is None:
             user_keywords = DEFAULT_EXPENSE_KEYWORDS
@@ -173,17 +179,18 @@ def create_app():
         if 'user' not in session:
             return jsonify({'error': 'Unauthorized'}), 401
 
-        reparser = Reparser()
         data = request.get_json()
         ocr_result = data.get('ocr_result')
-        expense_keywords = data.get('expense_keywords') # Get keywords from request
+        expense_keywords = data.get('expense_keywords')
+        edited_items = data.get('edited_items') # New: Get edited items from request
 
-        if not ocr_result or 'full_text' not in ocr_result:
+        # The actual OCR text is nested one level deeper.
+        if not ocr_result or not ocr_result.get('ocr_result') or 'full_text' not in ocr_result.get('ocr_result'):
             return jsonify({'error': 'No ocr_result with full_text provided'}), 400
 
         try:
             # Use the new, lightweight Reparser which has no external dependencies.
-            reparsed_result = reparser.reprocess(ocr_result, expense_keywords=expense_keywords)
+            reparsed_result = reparser.reprocess(ocr_result, expense_keywords=expense_keywords, edited_items=edited_items)
             return jsonify(reparsed_result)
         except Exception as e:
             logger.error(f"Reparsing failed: {e}", exc_info=True)

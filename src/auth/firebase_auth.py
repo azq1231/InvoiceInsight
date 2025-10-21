@@ -36,7 +36,12 @@ class FirebaseAuthManager:
         if not id_token:
             return None
         try:
-            decoded_token = auth.verify_id_token(id_token)
+            # Add clock_skew_seconds to tolerate minor clock differences between client and server.
+            # This is the robust, server-side solution for "Token used too early" errors.
+            decoded_token = auth.verify_id_token(
+                id_token, 
+                clock_skew_seconds=10
+            )
             return decoded_token
         except Exception as e:
             logger.error(f"Failed to verify ID token: {e}")

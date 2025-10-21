@@ -98,7 +98,7 @@ class OCROrchestrator:
             custom_data = None
             if is_general_ledger(full_text):
                 # Pass the custom keywords to the parser
-                custom_data = parse_general_ledger(full_text, expense_keywords=expense_keywords)
+                custom_data = parse_general_ledger(full_text, expense_keywords=expense_keywords) # No edited_items here, as this is initial parse
 
             if custom_data:
                 # 自訂解析器對其項目列表有最高優先權。
